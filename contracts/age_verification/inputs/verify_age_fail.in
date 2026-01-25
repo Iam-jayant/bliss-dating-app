@@ -1,0 +1,4 @@
+// Example input for verify_age transition
+// Test case: 17 year old user (should fail)
+[verify_age]
+private age: u8 = 17u8;

@@ -1,0 +1,6 @@
+{
+  "program": "age_verification.aleo",
+  "version": "0.0.0",
+  "description": "Privacy-preserving age verification system for Bliss",
+  "license": "MIT"
+}
