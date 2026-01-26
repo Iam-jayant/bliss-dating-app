@@ -1,15 +1,18 @@
 // Bliss Wave 1: Zero-Knowledge Age Verification Contract
 // Privacy-first age verification without revealing personal data
 
-program age_verification.aleo {
+program bliss_age_verification_v1.aleo {
     
     // Private credential record for verified adults
     // Contains no personal information, no expiry, no revocation complexity
     record VerificationRecord {
         owner: address,      // User who owns this credential
         verified: bool,      // Always true for issued records
-        _nonce: group,       // Aleo-required nonce for privacy
     }
+
+    // Constructor function (required for deployment)
+    @noupgrade
+    async constructor() {}
 
     // Verify user is 18+ years old using zero-knowledge proof
     // Input: private age (never stored or revealed)
@@ -23,17 +26,16 @@ program age_verification.aleo {
         return VerificationRecord {
             owner: self.caller,
             verified: true,
-            _nonce: group::GEN,
         };
     }
 
     // Prove possession of valid verification record
     // Input: private VerificationRecord
     // Output: boolean confirmation without revealing record contents
-    transition prove_possession(private record: VerificationRecord) -> bool {
+    transition prove_possession(private verification_record: VerificationRecord) -> bool {
         // Verify record authenticity and ownership
-        assert_eq(record.owner, self.caller);
-        assert_eq(record.verified, true);
+        assert_eq(verification_record.owner, self.caller);
+        assert_eq(verification_record.verified, true);
         
         // Return confirmation without revealing record data
         return true;

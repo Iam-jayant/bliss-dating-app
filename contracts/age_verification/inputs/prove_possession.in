@@ -1,0 +1,9 @@
+// Example input for prove_possession transition
+// Test case: Valid verification record
+[prove_possession]
+private verification_record: VerificationRecord = {
+  owner: aleo1wcfu7p027lctcjkvu8jhdyqlmnmlp0tnhycan0qszz3cr70yzsxs2j34ck.private,
+  verified: true.private,
+  _nonce: 8271585165268509311171153854094176057222410087745342282753382442394205739697group.public,
+  _version: 1u8.public
+};
