@@ -8,7 +8,7 @@ const Particle = ({ side, index }: { side: 'left' | 'right'; index: number }) =>
   const randomDuration = 1 + Math.random();
   const randomDelay = Math.random() * 0.5;
 
-  const style: React.CSSProperties = {
+  const style: React.CSSProperties & Record<string, any> = {
     '--y-offset': `${randomY}%`,
     '--duration': `${randomDuration}s`,
     '--delay': `${randomDelay}s`,

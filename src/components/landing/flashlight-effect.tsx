@@ -50,7 +50,7 @@ export function FlashlightEffect({ children }: { children: React.ReactNode }) {
     <div className="relative">
       {children}
       <div
-        className="pointer-events-none fixed inset-0 z-30 transition-opacity duration-300 ease-out"
+        className="flashlight-blur pointer-events-none fixed inset-0 z-30 transition-opacity duration-300 ease-out"
         style={{
           backdropFilter: 'blur(4px)',
           opacity: isMounted ? scrollOpacity : 0,

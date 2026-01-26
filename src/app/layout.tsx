@@ -4,9 +4,8 @@ import { cn } from '@/lib/utils';
 import { Toaster } from '@/components/ui/toaster';
 
 export const metadata: Metadata = {
-  title: 'Bliss Landing',
-  description:
-    'A space where connection is sacred and your privacy is paramount.',
+  title: 'Bliss - Privacy-First Dating',
+  description: 'Zero-knowledge age verification for privacy-first dating',
 };
 
 export default function RootLayout({

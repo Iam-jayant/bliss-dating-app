@@ -31,7 +31,7 @@ const ConfettiParticle = ({ id }: { id: number }) => {
       '--y-end': '110vh',
       '--rotate-end': `${randomRotate + (Math.random() - 0.5) * 720}deg`,
       animation: `fall ${randomDuration}s ${randomDelay}s cubic-bezier(0.1, 0.5, 0.7, 1) forwards`,
-    });
+    } as React.CSSProperties & Record<string, any>);
   }, [id]);
 
   return (
