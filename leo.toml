@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "contracts/age_verification"
+]
+
+[workspace.dependencies]
