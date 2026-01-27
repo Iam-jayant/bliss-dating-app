@@ -94,7 +94,10 @@ export function validateVerificationRecord(record: any): boolean {
   const hasOnlyAllowedFields = recordFields.every(field => allowedFields.includes(field));
   
   // Ensure no sensitive data in field values
-  const hasNoSensitiveData = recordFields.every(field => {
+  // Exclude '_nonce' and 'owner' from validation as they contain timestamps/addresses
+  const fieldsToCheck = recordFields.filter(f => !['_nonce', 'owner', '_version'].includes(f));
+  
+  const hasNoSensitiveData = fieldsToCheck.every(field => {
     const value = record[field];
     if (typeof value === 'string') {
       return !(/\d{4}/.test(value) || /age/i.test(value) || /birth/i.test(value));

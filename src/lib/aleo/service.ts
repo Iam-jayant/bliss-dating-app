@@ -53,13 +53,22 @@ export class AleoService {
       const inputs = [`${age}u8`];
       const fee = ALEO_CONFIG.FEE_MICROCREDITS;
 
+      console.log('Creating transaction with:', {
+        program: this.programId,
+        function: ALEO_CONFIG.FUNCTIONS.VERIFY_AGE,
+        inputs,
+        fee,
+        publicKey: walletAdapter.publicKey
+      });
+
       const aleoTransaction = Transaction.createTransaction(
         walletAdapter.publicKey,
         WalletAdapterNetwork.TestnetBeta,
         this.programId,
         ALEO_CONFIG.FUNCTIONS.VERIFY_AGE,
         inputs,
-        fee
+        fee,
+        false // Use public fee (not private) - this uses public credits which you have
       );
 
       if (!aleoTransaction) {
@@ -70,14 +79,16 @@ export class AleoService {
       // Some versions of the adapter fail if passed a class instance with methods
       const plainTransaction = JSON.parse(JSON.stringify(aleoTransaction));
 
-      console.log('Requesting transaction:', plainTransaction);
+      console.log('Requesting transaction from wallet:', plainTransaction);
 
-      // Request transaction from wallet
+      // Request transaction from wallet - this should trigger the wallet popup
       const transactionId = await walletAdapter.requestTransaction(plainTransaction);
 
       if (!transactionId) {
         throw new Error('Transaction request failed (no ID returned)');
       }
+
+      console.log('Transaction submitted successfully:', transactionId);
 
       // For now, simulate a successful verification record
       // In real implementation, you would parse the actual transaction outputs
@@ -107,6 +118,17 @@ export class AleoService {
       };
 
     } catch (error) {
+      console.error('Age verification error:', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      
+      // Check for specific wallet errors
+      if (errorMessage.includes('No records for fee')) {
+        return {
+          success: false,
+          error: 'Your wallet needs fee records to pay for transactions. Please send 0.1 Aleo to yourself in Leo Wallet (this creates fee records), wait for confirmation, then try again.'
+        };
+      }
+      
       const sanitizedError = sanitizeError(error instanceof Error ? error : new Error('Unknown error'));
       privacyLog('Age verification failed', { error: sanitizedError });
       return {
