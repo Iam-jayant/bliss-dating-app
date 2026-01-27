@@ -184,7 +184,7 @@ export function AgeVerification() {
               asChild
               className="enter-bliss-button group relative overflow-hidden text-primary-foreground px-3 py-2 md:px-4 md:py-2 text-xs md:text-sm font-semibold border-0 h-auto"
             >
-              <a href="/app">
+              <a href="/onboarding">
                 <Sparkles className="w-3 h-3 md:w-4 md:h-4 mr-1.5 md:mr-2 transition-transform group-hover:rotate-12" />
                 Try Bliss
                 <ArrowRight className="w-3 h-3 md:w-4 md:h-4 ml-1.5 md:ml-2 transition-transform group-hover:translate-x-1" />
