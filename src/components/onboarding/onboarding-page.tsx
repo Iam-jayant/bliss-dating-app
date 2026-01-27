@@ -1,17 +1,18 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { useWallet } from '@demox-labs/aleo-wallet-adapter-react';
 import { WalletMultiButton } from '@demox-labs/aleo-wallet-adapter-reactui';
 import { DecryptPermission, WalletAdapterNetwork } from '@demox-labs/aleo-wallet-adapter-base';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { aleoService } from '@/lib/aleo/service';
-import { createSupabaseProfile, updateProfile } from '@/lib/supabase/profile';
+import { createSupabaseProfile, getProfile } from '@/lib/supabase/profile';
 import { CheckCircle2, Wallet, Shield, User, Sparkles } from 'lucide-react';
 import { WalletSelectionModal } from './wallet-selection-modal';
+import { ProfileForm } from './profile-form';
 
 interface OnboardingPageProps {
     onComplete?: () => void;
@@ -20,26 +21,43 @@ interface OnboardingPageProps {
 type Step = 1 | 2 | 3 | 4;
 
 export function OnboardingPage({ onComplete }: OnboardingPageProps) {
-    const { connected, connecting, publicKey, connect, disconnect, wallets, select } = useWallet();
+    const { connected, publicKey, connect, wallets, select } = useWallet();
+    const router = useRouter();
 
     // State management
     const [currentStep, setCurrentStep] = useState<Step>(1);
     const [walletAddress, setWalletAddress] = useState<string>('');
     const [age, setAge] = useState<string>('');
-    const [bio, setBio] = useState<string>('');
-    const [interests, setInterests] = useState<string>('');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string>('');
-    const [verificationTxId, setVerificationTxId] = useState<string>('');
     const [showWalletModal, setShowWalletModal] = useState(false);
 
     // Handle wallet connection
     useEffect(() => {
-        if (connected && publicKey && currentStep === 1) {
-            setWalletAddress(publicKey);
-            setCurrentStep(2);
-            setLoading(false); // Clear loading state after successful connection
+        async function checkProfile() {
+            if (connected && publicKey && currentStep === 1) {
+                setWalletAddress(publicKey);
+                setLoading(false);
+                
+                // Check if profile already exists
+                try {
+                    const existingProfile = await getProfile(publicKey);
+                    if (existingProfile) {
+                        // Profile exists, redirect to profile page
+                        router.push('/profile');
+                        return;
+                    }
+                } catch (err) {
+                    console.error('Error checking profile:', err);
+                }
+                
+                // No profile, continue to step 2
+                setCurrentStep(2);
+            }
         }
+        
+        checkProfile();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [connected, publicKey, currentStep]);
 
     const handleConnectWallet = async () => {
@@ -100,9 +118,7 @@ export function OnboardingPage({ onComplete }: OnboardingPageProps) {
                 return;
             }
 
-            setVerificationTxId(result.transaction?.id || '');
-
-            // Create user in Supabase after successful verification
+            // Create user in Supabase after successful verification (legacy compatibility)
             await createSupabaseProfile({
                 wallet_address: walletAddress,
                 created_at: new Date().toISOString(),
@@ -131,51 +147,10 @@ export function OnboardingPage({ onComplete }: OnboardingPageProps) {
         }
     };
 
-    const handleProfileCreation = async () => {
-        try {
-            setLoading(true);
-            setError('');
-
-            if (!bio.trim()) {
-                setError('Please add a short bio.');
-                return;
-            }
-
-            const interestsArray = interests
-                .split(',')
-                .map(i => i.trim())
-                .filter(i => i.length > 0);
-
-            if (interestsArray.length === 0) {
-                setError('Please add at least one interest.');
-                return;
-            }
-
-            // Update profile in Supabase
-            await updateProfile(walletAddress, {
-                bio: bio.trim(),
-                interests: interestsArray,
-                onboarding_completed: true,
-            });
-
-            setCurrentStep(4);
-        } catch (err) {
-            setError('Failed to create profile. Please try again.');
-            console.error('Profile creation error:', err);
-        } finally {
-            setLoading(false);
-        }
-    };
-
     const getStepStatus = (step: Step): 'inactive' | 'active' | 'completed' => {
         if (step < currentStep) return 'completed';
         if (step === currentStep) return 'active';
         return 'inactive';
-    };
-
-    const shortenAddress = (address: string) => {
-        if (!address) return '';
-        return `${address.slice(0, 10)}...${address.slice(-8)}`;
     };
 
     return (
@@ -195,14 +170,8 @@ export function OnboardingPage({ onComplete }: OnboardingPageProps) {
                             onClick={() => setShowWalletModal(true)}
                             className="bg-primary hover:bg-primary/90 text-primary-foreground"
                         >
-                            Connect Wallet
+                            Connect
                         </Button>
-                    )}
-
-                    {currentStep > 1 && walletAddress && (
-                        <div className="text-sm text-muted-foreground font-code">
-                            {shortenAddress(walletAddress)}
-                        </div>
                     )}
                 </div>
             </nav>
@@ -330,60 +299,21 @@ export function OnboardingPage({ onComplete }: OnboardingPageProps) {
 
                         {/* Step 3: Profile Creation */}
                         {currentStep === 3 && (
-                            <div className="space-y-6 max-w-md mx-auto">
-                                <div className="text-center">
+                            <div>
+                                <div className="text-center mb-8">
                                     <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-primary/20 flex items-center justify-center">
                                         <User className="w-8 h-8 text-primary" />
                                     </div>
                                     <h2 className="font-headline text-3xl italic mb-2">Create Your Profile</h2>
                                     <p className="text-muted-foreground">
-                                        Tell us a bit about yourself. Keep it authentic.
+                                        Tell us about yourself. Keep it authentic.
                                     </p>
                                 </div>
 
-                                <div className="space-y-4">
-                                    <div>
-                                        <Label htmlFor="bio" className="text-sm text-muted-foreground">
-                                            Bio
-                                        </Label>
-                                        <Textarea
-                                            id="bio"
-                                            value={bio}
-                                            onChange={(e) => setBio(e.target.value)}
-                                            placeholder="A short bio about yourself..."
-                                            maxLength={200}
-                                            rows={4}
-                                            className="mt-1 bg-background/50 border-white/10 resize-none"
-                                        />
-                                        <p className="text-xs text-muted-foreground mt-1">
-                                            {bio.length}/200 characters
-                                        </p>
-                                    </div>
-
-                                    <div>
-                                        <Label htmlFor="interests" className="text-sm text-muted-foreground">
-                                            Interests
-                                        </Label>
-                                        <Input
-                                            id="interests"
-                                            value={interests}
-                                            onChange={(e) => setInterests(e.target.value)}
-                                            placeholder="Privacy, ZK proofs, tech, art..."
-                                            className="mt-1 bg-background/50 border-white/10"
-                                        />
-                                        <p className="text-xs text-muted-foreground mt-1">
-                                            Separate with commas
-                                        </p>
-                                    </div>
-
-                                    <Button
-                                        onClick={handleProfileCreation}
-                                        disabled={loading || !bio.trim() || !interests.trim()}
-                                        className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
-                                    >
-                                        {loading ? 'Creating Profile...' : 'Create Profile'}
-                                    </Button>
-                                </div>
+                                <ProfileForm
+                                    walletAddress={walletAddress}
+                                    onSuccess={() => setCurrentStep(4)}
+                                />
                             </div>
                         )}
 
@@ -395,37 +325,19 @@ export function OnboardingPage({ onComplete }: OnboardingPageProps) {
                                 </div>
 
                                 <div>
-                                    <h2 className="font-headline text-4xl italic mb-2">You're Verified</h2>
+                                    <h2 className="font-headline text-4xl italic mb-2">You're All Set!</h2>
                                     <p className="text-muted-foreground">
                                         Welcome to Bliss. Your privacy-first profile is ready.
                                     </p>
                                 </div>
 
-                                <div className="backdrop-blur-xl bg-background/30 border border-white/10 rounded-xl p-6 text-left space-y-4">
-                                    <div>
-                                        <p className="text-xs text-muted-foreground mb-1">Wallet Address</p>
-                                        <p className="font-code text-sm">{shortenAddress(walletAddress)}</p>
-                                    </div>
-
-                                    <div>
-                                        <p className="text-xs text-muted-foreground mb-1">Bio</p>
-                                        <p className="text-sm">{bio}</p>
-                                    </div>
-
-                                    <div>
-                                        <p className="text-xs text-muted-foreground mb-2">Interests</p>
-                                        <div className="flex flex-wrap gap-2">
-                                            {interests.split(',').map((interest, idx) => (
-                                                <span
-                                                    key={idx}
-                                                    className="px-3 py-1 bg-primary/20 text-primary text-xs rounded-full"
-                                                >
-                                                    {interest.trim()}
-                                                </span>
-                                            ))}
-                                        </div>
-                                    </div>
-                                </div>
+                                <Button
+                                    onClick={() => router.push('/profile')}
+                                    size="lg"
+                                    className="bg-primary hover:bg-primary/90 text-primary-foreground px-8"
+                                >
+                                    View My Profile
+                                </Button>
 
                                 <div className="pt-4">
                                     <p className="text-sm text-muted-foreground italic">
