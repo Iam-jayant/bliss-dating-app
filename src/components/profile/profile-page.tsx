@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { CheckCircle2, Edit, Loader2 } from 'lucide-react';
 import { getProfile, getProfileImageUrl } from '@/lib/supabase/profile';
 import type { ProfileData } from '@/lib/supabase/types';
+import Image from 'next/image';
 
 export function ProfilePage() {
   const { connected, publicKey } = useWallet();
@@ -129,11 +130,17 @@ export function ProfilePage() {
       {/* Navbar */}
       <nav className="fixed top-0 left-0 right-0 z-50 backdrop-blur-xl bg-card/10 border-b border-white/10">
         <div className="container mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center space-x-2">
-            <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center">
-              <span className="font-headline text-primary text-lg italic">B</span>
+          <div className="flex items-center">
+            <div className="w-10 h-10 relative flex items-center -mr-1">
+              <Image
+                src="/bliss-logo.png"
+                alt="Bliss"
+                width={40}
+                height={40}
+                className="object-contain"
+              />
             </div>
-            <span className="font-headline text-xl italic">Bliss</span>
+            <span className="font-headline text-xl">Bliss</span>
           </div>
         </div>
       </nav>
