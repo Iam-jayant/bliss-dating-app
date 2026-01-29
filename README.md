@@ -1,8 +1,8 @@
-# 🌸 Bliss - Privacy-First Dating on Aleo
+# Bliss - Privacy-First Dating on Aleo
 
 <div align="center">
 
-![Bliss Logo](public/bliss-logo.png)
+<img src="public/bliss-logo.png" alt="Bliss Logo" width="128" height="128" />
 
 **Find your vibe, keep your privacy**
 
@@ -32,35 +32,35 @@ Open `http://localhost:9002` and connect **Leo Wallet** (Testnet).
 
 ---
 
-## 👥 Who Is Bliss For?
+## Who Is Bliss For?
 
-- 👩 **Users** who want safer, private online dating
-- 🧑‍💻 **Developers** learning zero-knowledge apps on Aleo
-- 🌐 **Web2 users** onboarding into Web3 without friction
-- 🧪 **Researchers** exploring privacy-first social applications
-
----
-
-## 📖 Table of Contents
-
-- [The Problem We Solve](#-the-problem-we-solve)
-- [Why This Can't Be Built Without Zero-Knowledge](#-why-this-cant-be-built-safely-without-zero-knowledge)
-- [Why Aleo?](#-why-aleo)
-- [Solution: Bliss](#-solution-bliss)
-- [How It Works](#-how-it-works)
-- [Tech Stack](#-tech-stack)
-- [Smart Contract](#-smart-contract)
-- [Architecture](#-architecture-diagram)
-- [Getting Started](#-getting-started)
-- [Project Structure](#-project-structure)
-- [Roadmap](#-roadmap)
-- [Contributing to Aleo Ecosystem](#-contributing-to-aleo-ecosystem)
-- [Security & Privacy](#-security--privacy)
-- [License](#-license)
+- **Users** who want safer, private online dating
+- **Developers** learning zero-knowledge apps on Aleo
+- **Web2 users** onboarding into Web3 without friction
+- **Researchers** exploring privacy-first social applications
 
 ---
 
-## 🚨 The Problem We Solve
+## Table of Contents
+
+- [The Problem We Solve](#the-problem-we-solve)
+- [Why This Can't Be Built Without Zero-Knowledge](#why-this-cant-be-built-safely-without-zero-knowledge)
+- [Why Aleo?](#why-aleo)
+- [Solution: Bliss](#solution-bliss)
+- [How It Works](#how-it-works)
+- [Tech Stack](#tech-stack)
+- [Smart Contract](#smart-contract)
+- [Architecture](#architecture-diagram)
+- [Getting Started](#getting-started)
+- [Project Structure](#project-structure)
+- [Roadmap](#roadmap)
+- [Contributing to Aleo Ecosystem](#contributing-to-aleo-ecosystem)
+- [Security & Privacy](#security--privacy)
+- [License](#license)
+
+---
+
+## The Problem We Solve
 
 Dating today is broken. The statistics paint a concerning picture:
 
@@ -68,7 +68,7 @@ Dating today is broken. The statistics paint a concerning picture:
 - **91%** of single women in the U.S. worry about safety when dating
 - **44%** have felt unsafe on a date
 - **78%** of those unsafe dates started online
-> 📊 Source: [Dating News - Single Women Dating Safety Statistics](https://www.datingnews.com/industry-trends/single-women-dating-safety-statistics/)
+> Source: [Dating News - Single Women Dating Safety Statistics](https://www.datingnews.com/industry-trends/single-women-dating-safety-statistics/)
 
 ### Trust & Verification Issues
 - **70%** of women snoop online before meeting someone (vs. only 45% of men)
@@ -76,18 +76,18 @@ Dating today is broken. The statistics paint a concerning picture:
   - Fake job titles
   - Catfish photos
   - Misleading profiles
-> 📊 Source: [Security.org - Romance Scams Report](https://www.security.org/digital-safety/scams/romance/)
+> Source: [Security.org - Romance Scams Report](https://www.security.org/digital-safety/scams/romance/)
 
 ### Failed Solutions
-Other apps tried to solve this problem (like the viral "Tea" ☕ app), but fell short due to:
+Other apps tried to solve this problem (like the viral "Tea" app), but fell short due to:
 - **Data leaks** exposing sensitive user information
 - **Malicious trolls** abusing verification systems
 - **Centralized databases** becoming honeypots for hackers
-> 📰 Reference: [BBC - Tea App Security Issues](https://www.bbc.com/news/articles/c7vl57n74pqo)
+> Reference: [BBC - Tea App Security Issues](https://www.bbc.com/news/articles/c7vl57n74pqo)
 
 ---
 
-## 🔐 Why Aleo?
+## Why Aleo?
 
 Bliss leverages **Aleo's zero-knowledge blockchain** to solve privacy and trust issues that plague traditional dating apps:
 
@@ -125,26 +125,26 @@ Trust the company         →    Trust the math (ZK proofs)
 
 ---
 
-## 💡 Solution: Bliss
+## Solution: Bliss
 
 Bliss is a **privacy-first dating platform** that uses Aleo's blockchain to enable:
 
-✅ **Anonymous Age Verification** - Prove you're 18+ without revealing your age  
-✅ **Private Profiles** - Share what you want, when you want  
-✅ **Zero-Knowledge Credentials** - Verify attributes without exposing data  
-✅ **Decentralized Identity** - You own your data, not us  
-✅ **Safety First** - Mathematical proofs instead of trust  
+→ **Anonymous Age Verification** - Prove you're 18+ without revealing your age  
+→ **Private Profiles** - Share what you want, when you want  
+→ **Zero-Knowledge Credentials** - Verify attributes without exposing data  
+→ **Decentralized Identity** - You own your data, not us  
+→ **Safety First** - Mathematical proofs instead of trust  
 
 ### Core Principles
 
-🔒 **Privacy by Default** - Your data never leaves your control  
-🎯 **Selective Disclosure** - Share only what's necessary  
-🛡️ **Cryptographic Trust** - Math over promises  
-🌐 **Decentralized** - No central authority  
+▸ **Privacy by Default** - Your data never leaves your control  
+▸ **Selective Disclosure** - Share only what's necessary  
+▸ **Cryptographic Trust** - Math over promises  
+▸ **Decentralized** - No central authority  
 
 ---
 
-## 🎯 How It Works
+## How It Works
 
 ```mermaid
 graph TB
@@ -190,7 +190,7 @@ graph TB
 
 ---
 
-## 👤 User Flow
+## User Flow
 
 ### Complete Onboarding Journey
 
@@ -272,7 +272,7 @@ sequenceDiagram
 
 ---
 
-## 🛠️ Tech Stack
+## Tech Stack
 
 ### Frontend
 - **Next.js 15.1** - React framework with App Router
@@ -298,7 +298,7 @@ sequenceDiagram
 
 ---
 
-## 📜 Smart Contract
+## Smart Contract
 
 ### Deployed Contract
 
@@ -338,15 +338,15 @@ record VerificationRecord {
 
 ### Privacy Guarantees
 
-✅ No age data stored on-chain  
-✅ No personal information in records  
-✅ Zero-knowledge proof verification  
-✅ Private credentials as Aleo records  
-✅ Selective disclosure enabled  
+→ No age data stored on-chain  
+→ No personal information in records  
+→ Zero-knowledge proof verification  
+→ Private credentials as Aleo records  
+→ Selective disclosure enabled  
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 
@@ -422,7 +422,7 @@ leo deploy --network testnet
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 bliss/
@@ -460,7 +460,7 @@ bliss/
 
 ---
 
-## 🌱 Contributing to Aleo Ecosystem
+## Contributing to Aleo Ecosystem
 
 Bliss is built to showcase and grow the **Aleo ecosystem**. Here's how we contribute:
 
@@ -497,25 +497,25 @@ We welcome contributions! Here's how:
 
 ### Areas We Need Help
 
-- 🎨 UI/UX improvements
-- 🔐 Additional ZK proof implementations
-- 📱 Mobile responsiveness
-- 🧪 Testing and QA
-- 📚 Documentation
-- 🌐 Internationalization
+- UI/UX improvements
+- Additional ZK proof implementations
+- Mobile responsiveness
+- Testing and QA
+- Documentation
+- Internationalization
 
 ---
 
-## 🗺️ Roadmap
+## Roadmap
 
-### ✅ Wave 1 (Complete)
+### Wave 1 (Complete)
 - [x] Age verification with ZK proofs
 - [x] Wallet integration (Leo Wallet)
 - [x] Basic profile creation
 - [x] Landing page with privacy education
 - [x] Smart contract deployment
 
-### 🚧 Wave 2 (In Progress)
+### Wave 2 (In Progress)
 - [ ] Matching algorithm (privacy-preserving)
 - [ ] Encrypted messaging
 - [ ] Additional verification proofs
@@ -524,7 +524,7 @@ We welcome contributions! Here's how:
   - [ ] Employment verification
 - [ ] Enhanced profile features
 
-### 🔮 Wave 3 (Planned)
+### Wave 3 (Planned)
 - [ ] Fully on-chain profiles
 - [ ] Decentralized storage integration
 - [ ] Token-based features
@@ -532,7 +532,7 @@ We welcome contributions! Here's how:
 - [ ] Mobile app (iOS/Android)
 - [ ] Advanced matching with ZK-ML
 
-### 🌟 Future Vision
+### Future Vision
 - [ ] Cross-chain identity
 - [ ] Reputation system (privacy-preserving)
 - [ ] Video verification
@@ -541,7 +541,7 @@ We welcome contributions! Here's how:
 
 ---
 
-## 📊 Architecture Diagram
+## Architecture Diagram
 
 ```mermaid
 graph TB
@@ -579,11 +579,11 @@ graph TB
 
 ---
 
-## 🔒 Security & Privacy
+## Security & Privacy
 
 ### What We Collect
-- ❌ **We DON'T collect:** Age, location, browsing history, personal identifiers
-- ✅ **We DO collect:** Wallet address (public), profile info you choose to share
+- **We DON'T collect:** Age, location, browsing history, personal identifiers
+- **We DO collect:** Wallet address (public), profile info you choose to share
 
 ### Data Storage
 - **On-Chain:** Verification proofs (zero-knowledge, no personal data)
@@ -599,13 +599,13 @@ graph TB
 
 ---
 
-## 📄 License
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ---
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - **Aleo Team** - For building the privacy-first blockchain
 - **Leo Language** - For making ZK development accessible
@@ -614,7 +614,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-## 📞 Contact & Community
+## Contact & Community
 
 - **Website:** [bliss-dating.vercel.com](#)
 - **Email:** jayantkurekar1@gmail.com
@@ -627,6 +627,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 *Privacy is not a feature, it's a fundamental right*
 
-[⬆ Back to Top](#-bliss---privacy-first-dating-on-aleo)
+[⬆ Back to Top](#bliss---privacy-first-dating-on-aleo)
 
 </div>
