@@ -17,19 +17,45 @@
 
 ---
 
+## ⚡ Quick Start (2 Minutes)
+
+```bash
+git clone https://github.com/yourusername/bliss.git
+cd bliss
+pnpm install
+pnpm dev
+```
+
+Open `http://localhost:9002` and connect **Leo Wallet** (Testnet).
+
+**Prerequisites:** Node.js 18+, pnpm, [Leo Wallet extension](https://leo.app/), Aleo testnet tokens
+
+---
+
+## 👥 Who Is Bliss For?
+
+- 👩 **Users** who want safer, private online dating
+- 🧑‍💻 **Developers** learning zero-knowledge apps on Aleo
+- 🌐 **Web2 users** onboarding into Web3 without friction
+- 🧪 **Researchers** exploring privacy-first social applications
+
+---
+
 ## 📖 Table of Contents
 
 - [The Problem We Solve](#-the-problem-we-solve)
+- [Why This Can't Be Built Without Zero-Knowledge](#-why-this-cant-be-built-safely-without-zero-knowledge)
 - [Why Aleo?](#-why-aleo)
 - [Solution: Bliss](#-solution-bliss)
 - [How It Works](#-how-it-works)
-- [User Flow](#-user-flow)
 - [Tech Stack](#-tech-stack)
 - [Smart Contract](#-smart-contract)
+- [Architecture](#-architecture-diagram)
 - [Getting Started](#-getting-started)
 - [Project Structure](#-project-structure)
-- [Contributing to Aleo Ecosystem](#-contributing-to-aleo-ecosystem)
 - [Roadmap](#-roadmap)
+- [Contributing to Aleo Ecosystem](#-contributing-to-aleo-ecosystem)
+- [Security & Privacy](#-security--privacy)
 - [License](#-license)
 
 ---
@@ -262,8 +288,7 @@ sequenceDiagram
 - **@provablehq/sdk** - Aleo SDK for JavaScript
 
 ### Backend & Storage
-- **Supabase** - Database & authentication (Wave 1)
-- **Firebase** - File storage for profile images
+- **Supabase** - Database, authentication & image storage
 - **Genkit AI** - AI-powered features (future)
 
 ### Development Tools
@@ -348,20 +373,15 @@ pnpm install
 cp .env.example .env.local
 ```
 
-Edit `.env.local` with your credentials:
+Edit `.env.local`:
 ```env
-# Supabase
-NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_key
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 
-# Firebase (for image uploads)
-NEXT_PUBLIC_FIREBASE_API_KEY=your_firebase_key
-NEXT_PUBLIC_FIREBASE_PROJECT_ID=your_project_id
-NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=your_bucket
+NEXT_PUBLIC_ALEO_API_URL=https://api.explorer.provable.com/v1/testnet
 
-# Aleo
-NEXT_PUBLIC_ALEO_NETWORK=testnet
-NEXT_PUBLIC_PROGRAM_ID=age_verification.aleo
+# Deployed smart contract program ID
+NEXT_PUBLIC_AGE_VERIFICATION_PROGRAM_ID=bliss_age_verification_v1.aleo
 ```
 
 4. **Run development server**
