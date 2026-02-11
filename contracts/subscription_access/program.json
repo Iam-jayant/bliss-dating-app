@@ -1,0 +1,6 @@
+{
+  "program": "bliss_subscription_access.aleo",
+  "version": "0.0.0",
+  "description": "Privacy-preserving subscription management with usage limits",
+  "license": "MIT"
+}

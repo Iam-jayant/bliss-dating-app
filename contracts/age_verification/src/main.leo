@@ -30,14 +30,21 @@ program bliss_age_verification_v1.aleo {
     }
 
     // Prove possession of valid verification record
-    // Input: private VerificationRecord
-    // Output: boolean confirmation without revealing record contents
-    transition prove_possession(private verification_record: VerificationRecord) -> bool {
+    // Input: private VerificationRecord (consumed)
+    // Output: boolean confirmation + NEW VerificationRecord (reusable pattern)
+    // This solves the single-use record limitation by issuing a fresh record
+    transition prove_possession(private verification_record: VerificationRecord) -> (bool, VerificationRecord) {
         // Verify record authenticity and ownership
         assert_eq(verification_record.owner, self.caller);
         assert_eq(verification_record.verified, true);
         
-        // Return confirmation without revealing record data
-        return true;
+        // Issue a new record to maintain verification status
+        let new_record: VerificationRecord = VerificationRecord {
+            owner: self.caller,
+            verified: true,
+        };
+        
+        // Return confirmation + new reusable record
+        return (true, new_record);
     }
 }
