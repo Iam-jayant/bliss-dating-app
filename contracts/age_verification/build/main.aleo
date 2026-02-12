@@ -1,4 +1,4 @@
-program bliss_age_verification_v1.aleo;
+program bliss_age_verification_v2.aleo;
 
 record VerificationRecord:
     owner as address.private;
@@ -15,7 +15,9 @@ function prove_possession:
     input r0 as VerificationRecord.record;
     assert.eq r0.owner self.caller;
     assert.eq r0.verified true;
+    cast self.caller true into r1 as VerificationRecord.record;
     output true as boolean.private;
+    output r1 as VerificationRecord.record;
 
 constructor:
     assert.eq edition 0u16;
