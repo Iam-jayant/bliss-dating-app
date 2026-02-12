@@ -1,7 +1,7 @@
 // Bliss Wave 1: Zero-Knowledge Age Verification Contract
 // Privacy-first age verification without revealing personal data
 
-program bliss_age_verification_v1.aleo {
+program bliss_age_verification_v2.aleo {
     
     // Private credential record for verified adults
     // Contains no personal information, no expiry, no revocation complexity
