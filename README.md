@@ -144,6 +144,19 @@ Bliss is a **privacy-first dating platform** that uses Aleo's blockchain to enab
 
 ---
 
+### Implemented Features
+
+- **Landing page & marketing UI:** Responsive landing and marketing components in `src/components/landing`.
+- **Leo Wallet integration:** Connect via Leo Wallet adapter with frontend wallet buttons (`src/components/aleo/wallet-connect-button.tsx`).
+- **Age verification (Aleo):** On-chain age verification program with frontend form (`contracts/age_verification`, `src/components/aleo/age-verification-form.tsx`).
+- **Profile creation & storage:** Profile UI and Supabase integration under `src/lib/supabase` and `src/app/profile` (profiles and images stored in Supabase).
+- **Payment / Subscriptions (beta):** `PaymentService` for subscription purchases via Aleo transactions (`src/lib/payment/payment-service.ts`).
+- **Privacy utilities:** Wallet hashing and privacy helpers (`src/lib/wallet-hash.ts`).
+- **Basic matching & messaging prototypes:** UI components and initial logic under `src/components/matching` and `src/components/messaging`.
+- **Smart contract artifacts & builds:** Built Leo programs in `contracts/*/build` and deployment files in `contracts/*/deployment`.
+
+---
+
 ## How It Works
 
 ```mermaid
