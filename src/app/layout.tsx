@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils';
 import { Toaster } from '@/components/ui/toaster';
 import { AleoWalletProvider } from '@/lib/aleo/wallet-provider';
 import { ProfileRedirect } from '@/components/profile/profile-redirect';
+import { AppNav } from '@/components/navigation/app-nav';
 
 export const metadata: Metadata = {
   title: 'Bliss - Privacy-First Dating',
@@ -24,6 +25,7 @@ export default function RootLayout({
       </head>
       <body className={cn("font-body antialiased")}>
         <AleoWalletProvider>
+          <AppNav />
           <ProfileRedirect />
           {children}
           <Toaster />
