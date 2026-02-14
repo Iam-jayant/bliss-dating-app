@@ -19,8 +19,8 @@ export function ProfileRedirect() {
 
   useEffect(() => {
     async function checkAndRedirect() {
-      // Don't redirect if already on profile page
-      if (pathname === '/profile') {
+      // Don't redirect if already on profile or discovery page
+      if (pathname === '/profile' || pathname === '/discovery') {
         return;
       }
 
@@ -38,9 +38,9 @@ export function ProfileRedirect() {
         const profile = await getProfile(publicKey);
         
         if (profile) {
-          // Profile exists, redirect to profile page
-          console.log('Profile found, redirecting to /profile');
-          router.push('/profile');
+          // Profile exists, redirect to discovery feed
+          console.log('Profile found, redirecting to /discovery');
+          router.push('/discovery');
         }
       } catch (err) {
         // Silently fail - user can still navigate manually
