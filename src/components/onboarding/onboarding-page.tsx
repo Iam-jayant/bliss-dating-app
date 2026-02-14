@@ -339,16 +339,25 @@ export function OnboardingPage({ onComplete }: OnboardingPageProps) {
                                 </div>
 
                                 <Button
-                                    onClick={() => router.push('/profile')}
+                                    onClick={() => router.push('/discovery')}
                                     size="lg"
                                     className="bg-primary hover:bg-primary/90 text-primary-foreground px-8"
+                                >
+                                    Start Discovering
+                                </Button>
+
+                                <Button
+                                    onClick={() => router.push('/profile')}
+                                    size="lg"
+                                    variant="outline"
+                                    className="ml-3"
                                 >
                                     View My Profile
                                 </Button>
 
                                 <div className="pt-4">
                                     <p className="text-sm text-muted-foreground italic">
-                                        Wave 1 Complete. More features coming soon.
+                                        Swipe to find your match!
                                     </p>
                                 </div>
                             </div>
