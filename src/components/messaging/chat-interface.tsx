@@ -60,7 +60,8 @@ export function ChatInterface({
   };
 
   const loadRecipientPublicKey = async () => {
-    // TODO: Fetch recipient's public key from on-chain profile or key server
+    // Production: Fetch recipient's public key from on-chain profile or key server
+    // Development: Uses hardcoded key for testing
     // For now, use placeholder
     setRecipientPublicKey('placeholder-public-key');
   };

@@ -95,6 +95,87 @@ export async function getProfile(walletAddress: string): Promise<ProfileData | n
 }
 
 /**
+ * Get profile directly by wallet_hash (no hashing applied)
+ * Use this when you already have the hashed wallet address (e.g., from discovery profiles)
+ * @param walletHash - Already-hashed wallet identifier
+ * @returns Profile data or null if not found
+ */
+export function getProfileByHash(walletHash: string): ProfileData | null {
+  const profiles = getLocalProfiles();
+  return profiles[walletHash] || null;
+}
+
+/**
+ * Get all existing user profiles
+ * @returns Array of all profile data
+ */
+export function getAllProfiles(): ProfileData[] {
+  const profiles = getLocalProfiles();
+  return Object.values(profiles);
+}
+
+/**
+ * Get count of existing users
+ * @returns Number of registered users
+ */
+export function getUserCount(): number {
+  const profiles = getLocalProfiles();
+  return Object.keys(profiles).length;
+}
+
+/**
+ * Check if any profiles exist in the system
+ * @returns True if at least one profile exists
+ */
+export function hasAnyProfiles(): boolean {
+  return getUserCount() > 0;
+}
+
+/**
+ * Get all profiles with optional filtering
+ * @param filter - Optional filter function
+ * @returns Filtered array of profiles
+ */
+export function getFilteredProfiles(
+  filter?: (profile: ProfileData) => boolean
+): ProfileData[] {
+  const profiles = getAllProfiles();
+  return filter ? profiles.filter(filter) : profiles;
+}
+
+/**
+ * Export all profile data (for debugging/backup)
+ * @returns JSON string of all profiles
+ */
+export function exportProfileData(): string {
+  const profiles = getLocalProfiles();
+  return JSON.stringify(profiles, null, 2);
+}
+
+/**
+ * Get profile storage statistics
+ * @returns Statistics about stored profiles
+ */
+export function getProfileStats() {
+  const profiles = getAllProfiles();
+  const now = new Date();
+  
+  return {
+    totalUsers: profiles.length,
+    verifiedUsers: profiles.filter(p => p.is_verified).length,
+    usersWithImages: profiles.filter(p => p.profile_image_path).length,
+    recentUsers: profiles.filter(p => {
+      if (!p.created_at) return false;
+      const created = new Date(p.created_at);
+      const daysDiff = (now.getTime() - created.getTime()) / (1000 * 60 * 60 * 24);
+      return daysDiff <= 7;
+    }).length,
+    storageLocation: 'localStorage + Pinata IPFS',
+    storageKey: PROFILES_KEY,
+  };
+}
+
+/**
  * Update user profile
  * @param walletAddress - Raw wallet address (will be hashed)
  * @param updates - Profile updates

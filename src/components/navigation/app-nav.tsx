@@ -1,8 +1,9 @@
 'use client';
 
 import { usePathname, useRouter } from 'next/navigation';
+import Image from 'next/image';
 import { Button } from '@/components/ui/button';
-import { Heart, User, LogOut } from 'lucide-react';
+import { Heart, User, LogOut, MessageCircle, Sparkles, Settings } from 'lucide-react';
 import { useWallet } from '@demox-labs/aleo-wallet-adapter-react';
 import { cn } from '@/lib/utils';
 
@@ -22,57 +23,110 @@ export function AppNav() {
   };
 
   return (
-    <nav className="fixed top-0 left-0 right-0 z-50 bg-background/80 backdrop-blur-md border-b border-white/10">
-      <div className="container mx-auto px-4">
-        <div className="flex items-center justify-between h-16">
-          {/* Logo */}
-          <button
-            onClick={() => router.push('/discovery')}
-            className="font-headline text-2xl italic text-primary hover:text-primary/80 transition-colors"
-          >
-            Bliss
-          </button>
+    <nav className="fixed left-0 top-0 bottom-0 z-50 w-20 flex flex-col items-center py-6 bg-card/80 backdrop-blur-xl border-r border-primary/20">
+      {/* Logo */}
+      <button
+        onClick={() => router.push('/discovery')}
+        className="mb-8 hover:opacity-80 transition-opacity"
+      >
+        <Image 
+          src="/bliss-logo.png" 
+          alt="Bliss" 
+          width={48} 
+          height={48}
+          className="rounded-xl"
+        />
+      </button>
 
-          {/* Navigation Links */}
-          <div className="flex items-center gap-2">
-            <Button
-              variant={pathname === '/discovery' ? 'default' : 'ghost'}
-              size="sm"
-              onClick={() => router.push('/discovery')}
-              className={cn(
-                'gap-2',
-                pathname === '/discovery' && 'bg-primary text-primary-foreground'
-              )}
-            >
-              <Heart className="w-4 h-4" />
-              <span className="hidden sm:inline">Discover</span>
-            </Button>
+      {/* Navigation Links */}
+      <div className="flex-1 flex flex-col gap-4">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => router.push('/discovery')}
+          className={cn(
+            'rounded-xl h-12 w-12 p-0 transition-all',
+            pathname === '/discovery' 
+              ? 'bg-primary text-primary-foreground hover:bg-primary/90' 
+              : 'hover:bg-muted'
+          )}
+          title="Discover"
+        >
+          <Heart className="w-5 h-5" />
+        </Button>
 
-            <Button
-              variant={pathname === '/profile' ? 'default' : 'ghost'}
-              size="sm"
-              onClick={() => router.push('/profile')}
-              className={cn(
-                'gap-2',
-                pathname === '/profile' && 'bg-primary text-primary-foreground'
-              )}
-            >
-              <User className="w-4 h-4" />
-              <span className="hidden sm:inline">Profile</span>
-            </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => router.push('/matches')}
+          className={cn(
+            'rounded-xl h-12 w-12 p-0 transition-all',
+            pathname === '/matches' 
+              ? 'bg-primary text-primary-foreground hover:bg-primary/90' 
+              : 'hover:bg-muted'
+          )}
+          title="Matches"
+        >
+          <Sparkles className="w-5 h-5" />
+        </Button>
 
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleDisconnect}
-              className="gap-2 text-destructive hover:text-destructive hover:bg-destructive/10"
-            >
-              <LogOut className="w-4 h-4" />
-              <span className="hidden sm:inline">Logout</span>
-            </Button>
-          </div>
-        </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => router.push('/messages')}
+          className={cn(
+            'rounded-xl h-12 w-12 p-0 transition-all',
+            pathname === '/messages' 
+              ? 'bg-primary text-primary-foreground hover:bg-primary/90' 
+              : 'hover:bg-muted'
+          )}
+          title="Messages"
+        >
+          <MessageCircle className="w-5 h-5" />
+        </Button>
+
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => router.push('/profile')}
+          className={cn(
+            'rounded-xl h-12 w-12 p-0 transition-all',
+            pathname === '/profile' 
+              ? 'bg-primary text-primary-foreground hover:bg-primary/90' 
+              : 'hover:bg-muted'
+          )}
+          title="Profile"
+        >
+          <User className="w-5 h-5" />
+        </Button>
+
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => router.push('/settings')}
+          className={cn(
+            'rounded-xl h-12 w-12 p-0 transition-all',
+            pathname === '/settings' 
+              ? 'bg-primary text-primary-foreground hover:bg-primary/90' 
+              : 'hover:bg-muted'
+          )}
+          title="Settings"
+        >
+          <Settings className="w-5 h-5" />
+        </Button>
       </div>
+
+      {/* Logout Button at Bottom */}
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={handleDisconnect}
+        className="rounded-xl h-12 w-12 p-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+        title="Logout"
+      >
+        <LogOut className="w-5 h-5" />
+      </Button>
     </nav>
   );
 }
+

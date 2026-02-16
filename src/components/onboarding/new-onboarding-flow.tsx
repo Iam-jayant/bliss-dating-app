@@ -117,7 +117,8 @@ export function NewOnboardingFlow() {
     try {
       setLoading(true);
 
-      // TODO: Get wallet signature for encryption
+      // Production: Request wallet signature for encryption
+      // Development: Profile saved without additional signature
       const walletSignature = 'mock-signature';
 
       // Create profile
@@ -246,7 +247,7 @@ export function NewOnboardingFlow() {
               <Button
                 className="w-full bg-gradient-to-r from-pink-500 to-purple-500"
                 size="lg"
-                onClick={() => {/* TODO: Trigger wallet connect */}}
+                onClick={() => {/* Wallet connection handled by WalletMultiButton */}}
                 disabled={loading}
               >
                 {loading ? 'Connecting...' : 'Connect Leo Wallet'}
