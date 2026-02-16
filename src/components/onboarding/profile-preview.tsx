@@ -3,7 +3,7 @@
 import React from 'react';
 import { Badge } from '@/components/ui/badge';
 import { CheckCircle2, User } from 'lucide-react';
-import type { BioPromptType, DatingIntent } from '@/lib/supabase/types';
+import type { BioPromptType, DatingIntent } from '@/lib/storage/types';
 
 interface ProfilePreviewProps {
   name: string;

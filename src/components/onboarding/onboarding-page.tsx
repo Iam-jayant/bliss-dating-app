@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { aleoService } from '@/lib/aleo/service';
-import { createSupabaseProfile, getProfile } from '@/lib/supabase/profile';
+import { createSupabaseProfile, getProfile } from '@/lib/storage/profile';
 import { CheckCircle2, Wallet, Shield, User, Sparkles } from 'lucide-react';
 import { WalletSelectionModal } from './wallet-selection-modal';
 import { ProfileForm } from './profile-form';
@@ -123,10 +123,8 @@ export function OnboardingPage({ onComplete }: OnboardingPageProps) {
             }
 
             // Create user in Supabase after successful verification (legacy compatibility)
-            await createSupabaseProfile({
-                wallet_address: walletAddress,
+            await createSupabaseProfile(walletAddress, {
                 created_at: new Date().toISOString(),
-                onboarding_completed: false,
             });
 
             setCurrentStep(3);

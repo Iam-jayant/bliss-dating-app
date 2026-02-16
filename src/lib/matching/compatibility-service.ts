@@ -4,7 +4,7 @@
  * NO MOCK/SIMULATION - Uses actual profile data
  */
 
-import type { ProfileData } from '../supabase/types';
+import type { ProfileData } from '../storage/types';
 
 // Interest categories mapping (same as in contract)
 const INTEREST_MAP: { [key: string]: number } = {
@@ -48,7 +48,7 @@ export function interestsToBitfield(interests: string[]): number {
  * Count shared interests between two profiles
  */
 export function countSharedInterests(profile1: ProfileData, profile2: ProfileData): number {
-  const shared = profile1.interests.filter(interest => 
+  const shared = profile1.interests.filter((interest: string) => 
     profile2.interests.includes(interest)
   );
   return shared.length;
@@ -58,7 +58,7 @@ export function countSharedInterests(profile1: ProfileData, profile2: ProfileDat
  * Get shared interests list
  */
 export function getSharedInterests(profile1: ProfileData, profile2: ProfileData): string[] {
-  return profile1.interests.filter(interest => 
+  return profile1.interests.filter((interest: string) => 
     profile2.interests.includes(interest)
   );
 }
@@ -133,7 +133,7 @@ export function calculateEnhancedCompatibility(
   if (!intentCompatible) {
     score = Math.floor(score * 0.7); // 30% penalty for incompatible intents
   } else if (currentUser.dating_intent === targetProfile.dating_intent && 
-             currentUser.dating_intent !== 'Open to explore') {
+             currentUser.dating_intent !== 'not_sure') {
     score = Math.min(100, score + 10); // +10 bonus for exact intent match
   }
   
@@ -148,6 +148,56 @@ export function calculateEnhancedCompatibility(
 /**
  * Match storage in localStorage (real matching, not simulation)
  */
+const LIKES_STORAGE_KEY = 'bliss_likes_v2';
+const MATCHES_STORAGE_KEY = 'bliss_matches_v2';
+const PASSES_STORAGE_KEY = 'bliss_passes_v2';
+
+interface LikeRecord {
+  from: string;
+  to: string;
+  timestamp: number;
+  action: 'like' | 'superlike';
+}
+
+interface MatchRecord {
+  user1: string;
+  user2: string;
+  timestamp: number;
+  compatibility: number;
+}
+
+/**
+ * Get all likes received by a user (for "Who Liked You" premium feature)
+ */
+export function getLikesReceived(userAddress: string): any[] {
+  const likes = getLikes();
+  return likes.filter(l => l.to === userAddress);
+}
+
+// Storage helpers
+function getLikesStorage(): LikeRecord[] {
+  try {
+    return JSON.parse(localStorage.getItem(LIKES_STORAGE_KEY) || '[]');
+  } catch {
+    return [];
+  }
+}
+
+function getMatchesStorage(): MatchRecord[] {
+  try {
+    return JSON.parse(localStorage.getItem(MATCHES_STORAGE_KEY) || '[]');
+  } catch {
+    return [];
+  }
+}
+
+function getPassesStorage(): any[] {
+  try {
+    return JSON.parse(localStorage.getItem(PASSES_STORAGE_KEY) || '[]');
+  } catch {
+    return [];
+  }
+}
 const MATCHES_KEY = 'bliss_matches_v1';
 const LIKES_KEY = 'bliss_likes_v1';
 
@@ -209,11 +259,12 @@ function saveMatches(matches: MutualMatch[]): void {
 
 /**
  * Record a like action (real, stored locally)
+ * Supports both regular likes and superlikes
  */
 export function recordLike(
   fromWallet: string, 
   toWallet: string, 
-  interests: string[]
+  isSuperLike: boolean = false
 ): void {
   const likes = getLikes();
   
@@ -225,13 +276,13 @@ export function recordLike(
   filtered.push({
     from: fromWallet,
     to: toWallet,
-    action: 'like',
+    action: isSuperLike ? 'superlike' : 'like',
     timestamp: Date.now(),
-    interests,
+    interests: [],
   });
   
   saveLikes(filtered);
-  console.log(`💗 Like recorded: ${fromWallet.slice(0, 8)} → ${toWallet.slice(0, 8)}`);
+  console.log(`💗 ${isSuperLike ? 'Super ' : ''}Like recorded: ${fromWallet.slice(0, 8)} → ${toWallet.slice(0, 8)}`);
 }
 
 /**
@@ -270,18 +321,18 @@ export function checkMutualMatch(
 ): boolean {
   const likes = getLikes();
   
-  // Check if I liked them
+  // Check if I liked them (regular like or superlike)
   const myLike = likes.find(like => 
     like.from === fromWallet && 
     like.to === toWallet && 
-    like.action === 'like'
+    (like.action === 'like' || like.action === 'superlike')
   );
   
-  // Check if they liked me
+  // Check if they liked me (regular like or superlike)
   const theirLike = likes.find(like => 
     like.from === toWallet && 
     like.to === fromWallet && 
-    like.action === 'like'
+    (like.action === 'like' || like.action === 'superlike')
   );
   
   if (myLike && theirLike) {

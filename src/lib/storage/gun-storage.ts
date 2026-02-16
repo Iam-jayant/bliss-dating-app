@@ -19,7 +19,7 @@
  * Messages use per-chat AES keys derived from both users' wallet hashes.
  */
 
-import type { ProfileData } from '../supabase/types';
+import type { ProfileData } from './types';
 
 // Gun.js dynamic import to avoid SSR issues
 let gunInstance: any = null;

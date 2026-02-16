@@ -94,32 +94,155 @@ class MessageEncryption {
 }
 
 /**
- * Message Storage using IPFS + OrbitDB (decentralized database)
- * For MVP, can use Gun.js or XMTP protocol
+ * Message Storage using Gun.js P2P Network
+ * Real-time, decentralized, and privacy-preserving
  */
 class MessageStorage {
-  private messages: Map<string, Message[]> = new Map();
+  private gun: any = null;
+  private messageListeners: Map<string, Function> = new Map();
+
+  async initialize() {
+    if (typeof window === 'undefined') return;
+    
+    try {
+      const Gun = (await import('gun')).default;
+      this.gun = Gun({
+        peers: [
+          'https://gun-manhattan.herokuapp.com/gun',
+          'https://gun-us.herokuapp.com/gun',
+        ],
+        localStorage: true
+      });
+      console.log('🔫 Gun.js messaging initialized');
+    } catch (err) {
+      console.warn('Gun.js init failed:', err);
+    }
+  }
 
   async storeMessage(message: Message): Promise<void> {
     const threadKey = this.getThreadKey(message.from, message.to);
-    const existingMessages = this.messages.get(threadKey) || [];
-    this.messages.set(threadKey, [...existingMessages, message]);
-
-    // Production: Persist to decentralized storage (Gun.js, XMTP, or OrbitDB)
-    // Development: In-memory storage for testing
+    
+    // Store in Gun.js for real-time sync
+    if (this.gun) {
+      try {
+        await this.gun
+          .get('bliss_chats')
+          .get(threadKey)
+          .get('messages')
+          .get(message.id)
+          .put({
+            id: message.id,
+            from: message.from,
+            to: message.to,
+            encryptedContent: message.encryptedContent,
+            timestamp: message.timestamp,
+            read: message.read
+          });
+      } catch (err) {
+        console.error('Gun.js message store error:', err);
+      }
+    }
+    
+    // Also cache locally for offline access
+    const localKey = `bliss_chat_${threadKey}`;
+    const cached = JSON.parse(localStorage.getItem(localKey) || '[]');
+    cached.push(message);
+    localStorage.setItem(localKey, JSON.stringify(cached.slice(-100))); // Keep last 100
   }
 
   async getMessages(user1: string, user2: string): Promise<Message[]> {
     const threadKey = this.getThreadKey(user1, user2);
-    return this.messages.get(threadKey) || [];
+    const localKey = `bliss_chat_${threadKey}`;
+    
+    // First, return cached messages for instant loading
+    const cached = JSON.parse(localStorage.getItem(localKey) || '[]');
+    
+    // Then sync with Gun.js in background
+    if (this.gun) {
+      try {
+        const messages: Message[] = [];
+        await new Promise<void>((resolve) => {
+          this.gun
+            .get('bliss_chats')
+            .get(threadKey)
+            .get('messages')
+            .once((data: any) => {
+              if (data) {
+                Object.values(data).forEach((msg: any) => {
+                  if (msg && typeof msg === 'object' && msg.id) {
+                    messages.push(msg as Message);
+                  }
+                });
+              }
+              resolve();
+            });
+          // Timeout after 2s
+          setTimeout(resolve, 2000);
+        });
+        
+        if (messages.length > 0) {
+          // Update cache
+          localStorage.setItem(localKey, JSON.stringify(messages));
+          return messages.sort((a, b) => a.timestamp - b.timestamp);
+        }
+      } catch (err) {
+        console.warn('Gun.js message fetch error:', err);
+      }
+    }
+    
+    return cached;
+  }
+
+  /**
+   * Subscribe to real-time message updates
+   */
+  subscribeToMessages(user1: string, user2: string, callback: (message: Message) => void): () => void {
+    const threadKey = this.getThreadKey(user1, user2);
+    
+    if (this.gun) {
+      this.gun
+        .get('bliss_chats')
+        .get(threadKey)
+        .get('messages')
+        .on((data: any, key: string) => {
+          if (data && typeof data === 'object' && data.id && key !== '_') {
+            callback(data as Message);
+          }
+        });
+    }
+    
+    // Return unsubscribe function
+    return () => {
+      if (this.gun) {
+        this.gun
+          .get('bliss_chats')
+          .get(threadKey)
+          .get('messages')
+          .off();
+      }
+    };
   }
 
   async markAsRead(messageId: string, user1: string, user2: string): Promise<void> {
     const threadKey = this.getThreadKey(user1, user2);
-    const messages = this.messages.get(threadKey) || [];
-    const message = messages.find(m => m.id === messageId);
+    
+    if (this.gun) {
+      this.gun
+        .get('bliss_chats')
+        .get(threadKey)
+        .get('messages')
+        .get(messageId)
+        .get('read')
+        .put(true);
+    }
+    
+    // Update local cache
+    const localKey = `bliss_chat_${threadKey}`;
+    const cached = JSON.parse(localStorage.getItem(localKey) || '[]');
+    const message = cached.find((m: Message) => m.id === messageId);
     if (message) {
       message.read = true;
+      localStorage.setItem(localKey, JSON.stringify(cached));
     }
   }
 
@@ -145,6 +268,14 @@ export class MessagingService {
   async initialize(walletAddress: string) {
     this.currentUserAddress = walletAddress;
     await this.encryption.initialize();
+    await this.storage.initialize();
+  }
+
+  /**
+   * Subscribe to real-time messages
+   */
+  subscribeToMessages(recipientAddress: string, callback: (message: Message) => void): () => void {
+    return this.storage.subscribeToMessages(this.currentUserAddress, recipientAddress, callback);
   }
 
   /**

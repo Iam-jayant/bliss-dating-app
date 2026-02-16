@@ -48,8 +48,11 @@ firestore-debug.log
 /contracts/*/build/
 /contracts/*/artifacts/
 
-# extra md files
-PROJECT_STRUCTURE.md
-Bliss_Ideation_Document_26 jan.md
+# windows
+desktop.ini
+Thumbs.db
+
+# ide / editor
 .kiro
 .vscode
+.swc
