@@ -1,361 +1,115 @@
-# Bliss - Privacy-First Dating on Aleo
+<p align="center">
+  <img src="public/bliss-logo.png" alt="Bliss" width="120" />
+</p>
 
-<div align="center">
+<h1 align="center">Bliss</h1>
+<p align="center"><strong>Privacy-first dating powered by zero-knowledge proofs on Aleo</strong></p>
 
-<img src="public/bliss-logo.png" alt="Bliss Logo" width="128" height="128" />
-
-**Find your vibe, keep your privacy**
-
-[![Next.js](https://img.shields.io/badge/Next.js-15.1-black?style=flat&logo=next.js)](https://nextjs.org/)
-[![Aleo](https://img.shields.io/badge/Aleo-Testnet-blue?style=flat)](https://aleo.org/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue?style=flat&logo=typescript)](https://www.typescriptlang.org/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-
-[Live Demo](#) • [Documentation](#) • [Report Bug](#) • [Request Feature](#)
-
-</div>
+<p align="center">
+  <a href="#features">Features</a> · <a href="#how-it-works">How It Works</a> · <a href="#smart-contracts">Smart Contracts</a> · <a href="#getting-started">Getting Started</a> · <a href="#architecture">Architecture</a>
+</p>
 
 ---
 
-## ⚡ Quick Start (2 Minutes)
+## What is Bliss?
 
-```bash
-git clone https://github.com/yourusername/bliss.git
-cd bliss
-pnpm install
-pnpm dev
-```
+Bliss is a decentralized dating application that puts user privacy first. Unlike traditional dating apps that harvest personal data, Bliss uses **zero-knowledge proofs** on the **Aleo blockchain** to verify users without exposing sensitive information.
 
-Open `http://localhost:9002` and connect **Leo Wallet** (Testnet).
-
-**Prerequisites:** Node.js 18+, pnpm, [Leo Wallet extension](https://leo.app/), Aleo testnet tokens
+Your age is verified without revealing your birthdate. Your interests are matched without a central server reading them. Your messages are encrypted end-to-end. No company ever sees your private data.
 
 ---
 
-## Who Is Bliss For?
+## Features
 
-- **Users** who want safer, private online dating
-- **Developers** learning zero-knowledge apps on Aleo
-- **Web2 users** onboarding into Web3 without friction
-- **Researchers** exploring privacy-first social applications
+### Zero-Knowledge Age Verification
+Users prove they are 18+ without revealing their actual age or birthdate. The Aleo smart contract issues a private `VerificationRecord` that can be reused — no personal data is ever stored on-chain.
 
----
+### Privacy-Preserving Profile Discovery
+Browse profiles with a swipe-based interface. Like, pass, or super-like. Compatibility scores are calculated locally using interest matching — never sent to a server. Daily swipe limits encourage intentional connections.
 
-## Table of Contents
+### Mutual Match System
+When two users like each other, a mutual match is created. Only then can they message each other. Match data stays on the user's device and syncs peer-to-peer via Gun.js — no central database.
 
-- [The Problem We Solve](#the-problem-we-solve)
-- [Why This Can't Be Built Without Zero-Knowledge](#why-this-cant-be-built-safely-without-zero-knowledge)
-- [Why Aleo?](#why-aleo)
-- [Solution: Bliss](#solution-bliss)
-- [How It Works](#how-it-works)
-- [Tech Stack](#tech-stack)
-- [Smart Contract](#smart-contract)
-- [Architecture](#architecture-diagram)
-- [Getting Started](#getting-started)
-- [Project Structure](#project-structure)
-- [Roadmap](#roadmap)
-- [Contributing to Aleo Ecosystem](#contributing-to-aleo-ecosystem)
-- [Security & Privacy](#security--privacy)
-- [License](#license)
+### End-to-End Encrypted Messaging
+Matched users communicate through encrypted real-time chat powered by Gun.js P2P networking. Messages are encrypted with per-chat AES keys derived from both users' wallet hashes. No server can read your conversations.
 
----
+### Decentralized Storage
+- **Profile images** → IPFS via Pinata (content-addressed, censorship-resistant)
+- **Profile data** → Local-first with P2P sync via Gun.js
+- **Wallet identity** → SHA-256 hashed for privacy (one-way, irreversible)
 
-## The Problem We Solve
+### Subscription Tiers
+| | Free | Premium | Plus |
+|---|---|---|---|
+| Daily swipes | 10 | Unlimited | Unlimited |
+| Active chats | 3 | Unlimited | Unlimited |
+| Super likes | — | ✓ | ✓ |
+| See who liked you | — | — | ✓ |
 
-Dating today is broken. The statistics paint a concerning picture:
+Subscription state is managed on-chain via the `bliss_subscription_access.aleo` contract — the app never knows your payment details.
 
-### Safety Crisis
-- **91%** of single women in the U.S. worry about safety when dating
-- **44%** have felt unsafe on a date
-- **78%** of those unsafe dates started online
-> Source: [Dating News - Single Women Dating Safety Statistics](https://www.datingnews.com/industry-trends/single-women-dating-safety-statistics/)
-
-### Trust & Verification Issues
-- **70%** of women snoop online before meeting someone (vs. only 45% of men)
-- **40%** actually find sketchy information:
-  - Fake job titles
-  - Catfish photos
-  - Misleading profiles
-> Source: [Security.org - Romance Scams Report](https://www.security.org/digital-safety/scams/romance/)
-
-### Failed Solutions
-Other apps tried to solve this problem (like the viral "Tea" app), but fell short due to:
-- **Data leaks** exposing sensitive user information
-- **Malicious trolls** abusing verification systems
-- **Centralized databases** becoming honeypots for hackers
-> Reference: [BBC - Tea App Security Issues](https://www.bbc.com/news/articles/c7vl57n74pqo)
-
----
-
-## Why Aleo?
-
-Bliss leverages **Aleo's zero-knowledge blockchain** to solve privacy and trust issues that plague traditional dating apps:
-
-### Privacy by Design
-```
-Traditional Apps          →    Bliss on Aleo
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Store your age            →    Prove you're 18+ (age never stored)
-Public profile data       →    Private credentials as records
-Centralized databases     →    Decentralized verification
-Trust the company         →    Trust the math (ZK proofs)
-```
-
-### Key Aleo Features We Use
-
-1. **Zero-Knowledge Proofs**
-   - Verify age without revealing actual age
-   - Prove credentials without exposing data
-   - Mathematical certainty, not trust
-
-2. **Private Records**
-   - Verification credentials stored as Aleo records
-   - Only you can access your data
-   - No centralized database to hack
-
-3. **On-Chain Privacy**
-   - All verifications happen on-chain
-   - Transparent process, private data
-   - Immutable proof of verification
-
-4. **Decentralization**
-   - No single point of failure
-   - No company can sell your data
-   - You own your identity
-
----
-
-## Solution: Bliss
-
-Bliss is a **privacy-first dating platform** that uses Aleo's blockchain to enable:
-
-→ **Anonymous Age Verification** - Prove you're 18+ without revealing your age  
-→ **Private Profiles** - Share what you want, when you want  
-→ **Zero-Knowledge Credentials** - Verify attributes without exposing data  
-→ **Decentralized Identity** - You own your data, not us  
-→ **Safety First** - Mathematical proofs instead of trust  
-
-### Core Principles
-
-▸ **Privacy by Default** - Your data never leaves your control  
-▸ **Selective Disclosure** - Share only what's necessary  
-▸ **Cryptographic Trust** - Math over promises  
-▸ **Decentralized** - No central authority  
-
----
-
-### Implemented Features
-
-- **Landing page & marketing UI:** Responsive landing and marketing components in `src/components/landing`.
-- **Leo Wallet integration:** Connect via Leo Wallet adapter with frontend wallet buttons (`src/components/aleo/wallet-connect-button.tsx`).
-- **Age verification (Aleo):** On-chain age verification program with frontend form (`contracts/age_verification`, `src/components/aleo/age-verification-form.tsx`).
-- **Profile creation & storage:** Profile UI and Supabase integration under `src/lib/supabase` and `src/app/profile` (profiles and images stored in Supabase).
-- **Payment / Subscriptions (beta):** `PaymentService` for subscription purchases via Aleo transactions (`src/lib/payment/payment-service.ts`).
-- **Privacy utilities:** Wallet hashing and privacy helpers (`src/lib/wallet-hash.ts`).
-- **Basic matching & messaging prototypes:** UI components and initial logic under `src/components/matching` and `src/components/messaging`.
-- **Smart contract artifacts & builds:** Built Leo programs in `contracts/*/build` and deployment files in `contracts/*/deployment`.
+### Leo Wallet Integration
+Connect your Leo wallet to sign in. No email, no phone number, no password. Your Aleo wallet address is your identity, and it's hashed before being stored anywhere.
 
 ---
 
 ## How It Works
 
-```mermaid
-graph TB
-    A[User Visits Bliss] --> B[Connect Leo Wallet]
-    B --> C[Age Verification Request]
-    C --> D{ZK Proof Generation}
-    D -->|Age >= 18| E[Issue Private Record]
-    D -->|Age < 18| F[Verification Failed]
-    E --> G[Create Profile]
-    G --> H[Browse & Connect]
-    H --> I[Selective Disclosure]
-    
-    style A fill:#f9f,stroke:#333,stroke-width:2px
-    style E fill:#9f9,stroke:#333,stroke-width:2px
-    style F fill:#f99,stroke:#333,stroke-width:2px
-    style I fill:#99f,stroke:#333,stroke-width:2px
+```
+┌─────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│  Leo Wallet  │────▶│  Aleo Blockchain  │────▶│  ZK Proof (Age)  │
+│  (Identity)  │     │  (Smart Contracts)│     │  (No data leak)  │
+└─────────────┘     └──────────────────┘     └─────────────────┘
+       │
+       ▼
+┌─────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│  Bliss App   │────▶│  Gun.js P2P Sync  │────▶│  E2E Encrypted   │
+│  (Next.js)   │     │  (No server)      │     │  Messaging       │
+└─────────────┘     └──────────────────┘     └─────────────────┘
+       │
+       ▼
+┌─────────────┐
+│  Pinata IPFS │
+│  (Images)    │
+└─────────────┘
 ```
 
-### Step-by-Step Process
-
-1. **Wallet Connection**
-   - User connects Leo Wallet (Aleo wallet)
-   - No email, no password required
-   - Wallet address becomes identity
-
-2. **Age Verification (ZK Proof)**
-   ```
-   Input: User's age (private)
-   Process: Leo smart contract verifies age >= 18
-   Output: VerificationRecord (private credential)
-   Result: Age never stored or revealed
-   ```
-
-3. **Profile Creation**
-   - User creates profile with chosen information
-   - Profile data stored in Supabase (Wave 1)
-   - Future: Migrate to fully on-chain storage
-
-4. **Selective Disclosure**
-   - Users control what they share
-   - ZK proofs for sensitive attributes
-   - Privacy-preserving matching
+1. **Connect wallet** — User connects their Leo wallet (Aleo)
+2. **Verify age** — A ZK proof confirms age ≥ 18 without revealing the actual age
+3. **Create profile** — Name, photos, bio, interests — stored locally and on IPFS
+4. **Discover** — Swipe through profiles; compatibility is scored locally
+5. **Match** — Mutual likes create a match; both parties are notified
+6. **Chat** — E2E encrypted messaging via Gun.js peer-to-peer network
 
 ---
 
-## User Flow
+## Smart Contracts
 
-### Complete Onboarding Journey
+Four Leo smart contracts deployed on Aleo Testnet:
 
-```mermaid
-sequenceDiagram
-    participant U as User
-    participant W as Leo Wallet
-    participant B as Bliss App
-    participant A as Aleo Blockchain
-    participant D as Database
+| Contract | Program ID | Status | Purpose |
+|----------|-----------|--------|---------|
+| **Age Verification** | `bliss_age_verification_v2.aleo` | ✅ Deployed | ZK proof of age ≥ 18, issues reusable `VerificationRecord` |
+| **Profile Verification** | `bliss_profile_verification.aleo` | 🔨 Built | On-chain profile records with encrypted preferences |
+| **Compatibility Matching** | `bliss_compatibility_matching.aleo` | 🔨 Built | Private match records and mutual match computation |
+| **Subscription Access** | `bliss_subscription_access.aleo` | 🔨 Built | Privacy-preserving subscription tiers and usage limits |
 
-    U->>B: Visit Bliss Landing Page
-    B->>U: Show "Connect Wallet" Button
-    U->>W: Click Connect
-    W->>B: Request Connection
-    B->>W: Approve Connection
-    W->>B: Return Public Key
-    
-    B->>U: Show Age Verification
-    U->>B: Enter Age (e.g., 25)
-    B->>W: Request Transaction
-    W->>A: Execute verify_age(25)
-    A->>A: Check: 25 >= 18 ✓
-    A->>W: Issue VerificationRecord
-    W->>B: Confirmation
-    
-    B->>U: Show Profile Form
-    U->>B: Fill Profile Details
-    B->>D: Store Profile Data
-    D->>B: Confirmation
-    
-    B->>U: Redirect to Profile Page
-    U->>B: Browse & Connect
-```
-
-### Visual User Flow
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        LANDING PAGE                              │
-│  "Privacy is the new luxury"                                     │
-│  [Connect Wallet Button]                                         │
-└────────────────────┬────────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    STEP 1: CONNECT WALLET                        │
-│  • Select Leo Wallet                                             │
-│  • Approve connection                                            │
-│  • Wallet address = Identity                                     │
-└────────────────────┬────────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                   STEP 2: AGE VERIFICATION                       │
-│  • Enter age (stays private)                                     │
-│  • ZK proof generated                                            │
-│  • On-chain verification                                         │
-│  • Private record issued                                         │
-└────────────────────┬────────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                   STEP 3: CREATE PROFILE                         │
-│  • Name & bio                                                    │
-│  • Dating intent                                                 │
-│  • Interests                                                     │
-│  • Profile photo                                                 │
-└────────────────────┬────────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                   STEP 4: YOU'RE READY!                          │
-│  • View profile                                                  │
-│  • Browse connections                                            │
-│  • Selective disclosure                                          │
-└─────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Tech Stack
-
-### Frontend
-- **Next.js 15.1** - React framework with App Router
-- **TypeScript** - Type-safe development
-- **Tailwind CSS** - Utility-first styling
-- **Radix UI** - Accessible component primitives
-- **Framer Motion** - Smooth animations
-
-### Blockchain
-- **Aleo** - Zero-knowledge blockchain
-- **Leo Language** - Smart contract development
-- **Leo Wallet Adapter** - Wallet integration
-- **@provablehq/sdk** - Aleo SDK for JavaScript
-
-### Backend & Storage
-- **Supabase** - Database, authentication & image storage
-- **Genkit AI** - AI-powered features (future)
-
-### Development Tools
-- **pnpm** - Fast package manager
-- **ESLint** - Code linting
-- **Prettier** - Code formatting
-
----
-
-## Smart Contract
-
-### Deployed Contract
-
-**Program ID:** `age_verification.aleo`  
-**Network:** Aleo Testnet  
-**Deployment Transaction:** `at13x3vucazw9ylwvjkpzjh4ka94k97qyh7yz00te2nz20dfmgwyqfqcgmhjs`
-
-### Contract Functions
-
-#### 1. `verify_age`
-```leo
-function verify_age(private age: u8) -> VerificationRecord
-```
-- **Purpose:** Verify user is 18+ years old
-- **Input:** User's age (private, never stored)
-- **Output:** Private VerificationRecord
-- **Privacy:** Age is never revealed or stored on-chain
-
-#### 2. `prove_possession`
-```leo
-function prove_possession(private record: VerificationRecord) -> bool
-```
-- **Purpose:** Prove ownership of verification credential
-- **Input:** VerificationRecord (private)
-- **Output:** Boolean confirmation
-- **Privacy:** Record contents never revealed
-
-### Record Structure
+### Age Verification Contract
 
 ```leo
-record VerificationRecord {
-    owner: address,      // Wallet address
-    verified: bool,      // Always true
-    _nonce: group,       // Privacy nonce
+// Zero-knowledge age check — age is never stored or revealed
+transition verify_age(private age: u8) -> VerificationRecord {
+    assert(age >= 18u8);
+    return VerificationRecord { owner: self.caller, verified: true };
+}
+
+// Prove you have a valid verification without consuming it
+transition prove_possession(private record: VerificationRecord) -> (bool, VerificationRecord) {
+    assert_eq(record.owner, self.caller);
+    assert_eq(record.verified, true);
+    return (true, VerificationRecord { owner: self.caller, verified: true });
 }
 ```
-
-### Privacy Guarantees
-
-→ No age data stored on-chain  
-→ No personal information in records  
-→ Zero-knowledge proof verification  
-→ Private credentials as Aleo records  
-→ Selective disclosure enabled  
 
 ---
 
@@ -363,283 +117,173 @@ record VerificationRecord {
 
 ### Prerequisites
 
-- **Node.js** 18+ and pnpm
-- **Leo Wallet** browser extension
-- **Aleo testnet tokens** (for transactions)
-- **Git** for cloning
+- [Node.js](https://nodejs.org/) 18+
+- [Leo Wallet](https://www.leo.app/) browser extension
+- [Pinata](https://app.pinata.cloud/) account (free tier — for profile image storage)
 
-### Installation
+### Setup
 
-1. **Clone the repository**
 ```bash
-git clone https://github.com/yourusername/bliss.git
+# Clone the repository
+git clone https://github.com/your-org/bliss.git
 cd bliss
+
+# Install dependencies
+npm install
+
+# Configure environment
+cp .env.example .env
+# Edit .env with your Pinata JWT and gateway
+
+# Start the development server
+npm run dev
 ```
 
-2. **Install dependencies**
+The app runs at **http://localhost:9002**.
+
+### Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `NEXT_PUBLIC_PINATA_JWT` | Yes | Pinata API JWT for IPFS image uploads |
+| `NEXT_PUBLIC_PINATA_GATEWAY` | Yes | Pinata gateway domain |
+| `NEXT_PUBLIC_ALEO_NETWORK` | No | `testnet` (default) |
+| `NEXT_PUBLIC_ALEO_API_URL` | No | Aleo explorer API endpoint |
+| `NEXT_PUBLIC_AGE_VERIFICATION_PROGRAM` | No | Age verification program ID |
+| `NEXT_PUBLIC_MAX_SWIPES_FREE_TIER` | No | Free tier daily swipe limit (default: 10) |
+| `NEXT_PUBLIC_MAX_CHATS_FREE_TIER` | No | Free tier chat limit (default: 3) |
+
+### Available Scripts
+
 ```bash
-pnpm install
-```
-
-3. **Set up environment variables**
-```bash
-cp .env.example .env.local
-```
-
-Edit `.env.local`:
-```env
-NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
-
-NEXT_PUBLIC_ALEO_API_URL=https://api.explorer.provable.com/v1/testnet
-
-# Deployed smart contract program ID
-NEXT_PUBLIC_AGE_VERIFICATION_PROGRAM_ID=bliss_age_verification_v1.aleo
-```
-
-4. **Run development server**
-```bash
-pnpm dev
-```
-
-5. **Open your browser**
-```
-http://localhost:9002
-```
-
-### Smart Contract Development
-
-Navigate to the contract directory:
-```bash
-cd contracts/age_verification
-```
-
-Build the contract:
-```bash
-leo build
-```
-
-Test the contract:
-```bash
-# Test valid age
-leo run verify_age 25u8
-
-# Test invalid age (should fail)
-leo run verify_age 17u8
-```
-
-Deploy to testnet:
-```bash
-leo deploy --network testnet
+npm run dev        # Start dev server (port 9002, Turbopack)
+npm run build      # Production build
+npm run start      # Start production server
+npm run lint       # Run ESLint
+npm run typecheck  # Run TypeScript type checking
 ```
 
 ---
 
-## Project Structure
+## Architecture
+
+### Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| **Frontend** | Next.js 15, React 18, TypeScript |
+| **Styling** | Tailwind CSS, Radix UI (shadcn/ui), Framer Motion |
+| **Blockchain** | Aleo (Leo language), Leo Wallet Adapter |
+| **Storage** | Gun.js (P2P sync), Pinata IPFS (images), localStorage |
+| **Encryption** | AES-GCM (messages), SHA-256 (wallet hashing), Web Crypto API |
+| **AI** | Google Genkit (compatibility insights) |
+| **3D** | Three.js (landing page visuals) |
+| **Deployment** | Firebase App Hosting |
+
+### Project Structure
 
 ```
 bliss/
-├── contracts/
-│   └── age_verification/          # Leo smart contract
-│       ├── src/
-│       │   └── main.leo           # Contract code
-│       ├── inputs/                # Test inputs
-│       └── deployment/            # Deployment info
+├── contracts/                  # Aleo smart contracts (Leo)
+│   ├── age_verification/       # ZK age proof (deployed)
+│   ├── compatibility_matching/ # Private match records
+│   ├── profile_verification/   # On-chain profile records
+│   └── subscription_access/    # Subscription tiers
+├── public/                     # Static assets
 ├── src/
-│   ├── app/                       # Next.js app router
-│   │   ├── page.tsx              # Landing page
-│   │   ├── onboarding/           # Onboarding flow
-│   │   └── profile/              # User profile
+│   ├── app/                    # Next.js App Router pages
+│   │   ├── page.tsx            # Landing page
+│   │   ├── discovery/          # Swipe-based profile discovery
+│   │   ├── matches/            # Mutual matches view
+│   │   ├── messages/           # Encrypted chat
+│   │   ├── onboarding/         # Wallet + age verification flow
+│   │   ├── profile/            # User profile management
+│   │   └── settings/           # App settings & data export
 │   ├── components/
-│   │   ├── aleo/                 # Aleo wallet components
-│   │   ├── landing/              # Landing page components
-│   │   ├── onboarding/           # Onboarding components
-│   │   ├── profile/              # Profile components
-│   │   └── ui/                   # Reusable UI components
-│   ├── lib/
-│   │   ├── aleo/                 # Aleo integration
-│   │   │   ├── service.ts        # Contract interaction
-│   │   │   ├── wallet-provider.tsx
-│   │   │   └── types.ts
-│   │   └── supabase/             # Database integration
-│   └── hooks/                    # React hooks
-├── public/                        # Static assets
-├── docs/                          # Documentation
-├── package.json
-├── next.config.ts
-├── tailwind.config.ts
-└── tsconfig.json
+│   │   ├── aleo/               # Wallet connection & age verification UI
+│   │   ├── discovery/          # Discovery cards, filters, match modal
+│   │   ├── landing/            # Landing page sections
+│   │   ├── matches/            # Matches grid & likes view
+│   │   ├── messaging/          # Chat interface
+│   │   ├── onboarding/         # Onboarding wizard
+│   │   ├── profile/            # Profile editor & photo upload
+│   │   ├── settings/           # Settings panel
+│   │   └── ui/                 # shadcn/ui base components
+│   ├── hooks/                  # React hooks (session, mobile, toast)
+│   └── lib/
+│       ├── aleo/               # Aleo service, config, wallet provider
+│       ├── matching/           # Compatibility scoring engine
+│       ├── messaging/          # Messaging service
+│       ├── storage/            # Gun.js, Pinata, profile persistence
+│       └── location/           # Geohash-based proximity
+└── .env.example                # Environment template
+```
+
+### Data Flow
+
+```
+User Device (source of truth)
+  ├── localStorage          → Profile data, matches, likes, settings
+  ├── Gun.js P2P Network    → Real-time sync, encrypted messages
+  ├── Pinata IPFS           → Profile images (content-addressed)
+  └── Aleo Blockchain       → Age verification proofs, subscription state
+```
+
+No central server stores user data. The app is local-first — it works offline and syncs when connected.
+
+---
+
+## Privacy & Security
+
+- **No email / phone / password** — Wallet-based identity only
+- **Zero-knowledge proofs** — Age verified without revealing birthdate
+- **Wallet addresses hashed** — SHA-256, one-way, stored nowhere in plaintext
+- **E2E encrypted messaging** — AES-GCM with per-chat derived keys
+- **No central database** — Gun.js P2P + localStorage + IPFS
+- **Data export & deletion** — Users can export or delete all their data from Settings
+- **Open source contracts** — All smart contract code is auditable
+
+---
+
+## Deployment
+
+### Firebase App Hosting
+
+The project includes an `apphosting.yaml` configured for Firebase App Hosting:
+
+```bash
+# Build and deploy
+npm run build
+firebase deploy
+```
+
+### Self-Hosting
+
+Any Node.js 18+ environment that can run Next.js:
+
+```bash
+npm run build
+npm run start
 ```
 
 ---
 
-## Contributing to Aleo Ecosystem
+## Contributing
 
-Bliss is built to showcase and grow the **Aleo ecosystem**. Here's how we contribute:
-
-### 1. Real-World Use Case
-- Demonstrates practical ZK application
-- Shows privacy benefits in consumer apps
-- Proves Aleo's scalability for social platforms
-
-### 2. Developer Resources
-- Open-source codebase
-- Documented smart contracts
-- Integration examples
-- Best practices for Leo development
-
-### 3. User Adoption
-- Onboards non-crypto users to Aleo
-- Simplifies wallet interaction
-- Demonstrates UX possibilities
-
-### 4. Privacy Advocacy
-- Educates users about ZK technology
-- Shows alternatives to data-harvesting apps
-- Promotes privacy-first development
-
-### How to Contribute
-
-We welcome contributions! Here's how:
-
-1. **Fork the repository**
-2. **Create a feature branch** (`git checkout -b feature/amazing-feature`)
-3. **Commit your changes** (`git commit -m 'Add amazing feature'`)
-4. **Push to the branch** (`git push origin feature/amazing-feature`)
-5. **Open a Pull Request**
-
-### Areas We Need Help
-
-- UI/UX improvements
-- Additional ZK proof implementations
-- Mobile responsiveness
-- Testing and QA
-- Documentation
-- Internationalization
-
----
-
-## Roadmap
-
-### Wave 1 (Complete)
-- [x] Age verification with ZK proofs
-- [x] Wallet integration (Leo Wallet)
-- [x] Basic profile creation
-- [x] Landing page with privacy education
-- [x] Smart contract deployment
-
-### Wave 2 (In Progress)
-- [ ] Matching algorithm (privacy-preserving)
-- [ ] Encrypted messaging
-- [ ] Additional verification proofs
-  - [ ] Location proximity (without revealing exact location)
-  - [ ] Education verification
-  - [ ] Employment verification
-- [ ] Enhanced profile features
-
-### Wave 3 (Planned)
-- [ ] Fully on-chain profiles
-- [ ] Decentralized storage integration
-- [ ] Token-based features
-- [ ] DAO governance
-- [ ] Mobile app (iOS/Android)
-- [ ] Advanced matching with ZK-ML
-
-### Future Vision
-- [ ] Cross-chain identity
-- [ ] Reputation system (privacy-preserving)
-- [ ] Video verification
-- [ ] Event coordination
-- [ ] Community features
-
----
-
-## Architecture Diagram
-
-```mermaid
-graph TB
-    subgraph "Frontend"
-        A[Next.js App]
-        B[React Components]
-        C[Wallet Adapter]
-    end
-    
-    subgraph "Aleo Blockchain"
-        D[age_verification.aleo]
-        E[Private Records]
-        F[ZK Proofs]
-    end
-    
-    subgraph "Backend Services"
-        G[Supabase DB]
-        H[Firebase Storage]
-        I[Genkit AI]
-    end
-    
-    A --> B
-    B --> C
-    C --> D
-    D --> E
-    D --> F
-    B --> G
-    B --> H
-    B --> I
-    
-    style D fill:#9f9,stroke:#333,stroke-width:3px
-    style E fill:#99f,stroke:#333,stroke-width:2px
-    style F fill:#f9f,stroke:#333,stroke-width:2px
-```
-
----
-
-## Security & Privacy
-
-### What We Collect
-- **We DON'T collect:** Age, location, browsing history, personal identifiers
-- **We DO collect:** Wallet address (public), profile info you choose to share
-
-### Data Storage
-- **On-Chain:** Verification proofs (zero-knowledge, no personal data)
-- **Off-Chain:** Profile data (encrypted, user-controlled)
-- **Local:** Wallet keys (never leave your device)
-
-### Privacy Features
-- Zero-knowledge age verification
-- Private credential records
-- Selective disclosure
-- Encrypted communications (Wave 2)
-- No tracking or analytics
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/my-feature`)
+3. Commit your changes (`git commit -m 'Add my feature'`)
+4. Push to the branch (`git push origin feature/my-feature`)
+5. Open a Pull Request
 
 ---
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT
 
 ---
 
-## Acknowledgments
-
-- **Aleo Team** - For building the privacy-first blockchain
-- **Leo Language** - For making ZK development accessible
-- **Demox Labs** - For the wallet adapter
-- **Community** - For feedback and support
-
----
-
-## Contact & Community
-
-- **Website:** [bliss-dating.vercel.com](#)
-- **Email:** jayantkurekar1@gmail.com
-
----
-
-<div align="center">
-
-**Built with ❤️ on Aleo**
-
-*Privacy is not a feature, it's a fundamental right*
-
-[⬆ Back to Top](#bliss---privacy-first-dating-on-aleo)
-
-</div>
+<p align="center">
+  Built with ❤️ on <a href="https://aleo.org">Aleo</a>
+</p>

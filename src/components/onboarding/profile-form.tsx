@@ -15,9 +15,10 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { CheckCircle2, X } from 'lucide-react';
-import { createProfile, uploadProfileImage } from '@/lib/supabase/profile';
-import type { BioPromptType, DatingIntent } from '@/lib/supabase/types';
+import { createProfile, uploadProfileImage } from '@/lib/storage/profile';
+import type { BioPromptType, DatingIntent } from '@/lib/storage/types';
 import { ProfilePreview } from './profile-preview';
+import { MultiPhotoUpload } from '@/components/profile/multi-photo-upload';
 
 interface ProfileFormProps {
   walletAddress: string;
@@ -27,10 +28,9 @@ interface ProfileFormProps {
 export function ProfileForm({ walletAddress, onSuccess }: ProfileFormProps) {
   // Form state
   const [name, setName] = useState('');
-  const [profileImage, setProfileImage] = useState<File | null>(null);
-  const [imagePreview, setImagePreview] = useState<string>('');
+  const [photos, setPhotos] = useState<File[]>([]);
   const [bio, setBio] = useState('');
-  const [bioPrompt, setBioPrompt] = useState<BioPromptType>('Two truths and a lie');
+  const [bioPrompt, setBioPrompt] = useState<BioPromptType>('interests');
   const [interests, setInterests] = useState<string[]>([]);
   const [interestInput, setInterestInput] = useState('');
   const [datingIntent, setDatingIntent] = useState<DatingIntent | ''>('');
@@ -38,28 +38,6 @@ export function ProfileForm({ walletAddress, onSuccess }: ProfileFormProps) {
   // UI state
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-
-  // Image upload handler
-  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    // Validate size
-    if (file.size > 5 * 1024 * 1024) {
-      setError('Image must be under 5MB');
-      return;
-    }
-
-    // Validate format
-    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
-      setError('Please upload a jpg, png, or webp image');
-      return;
-    }
-
-    setProfileImage(file);
-    setImagePreview(URL.createObjectURL(file));
-    setError('');
-  };
 
   // Interest management
   const addInterest = () => {
@@ -90,8 +68,12 @@ export function ProfileForm({ walletAddress, onSuccess }: ProfileFormProps) {
       setError('Name must be under 50 characters');
       return;
     }
-    if (!profileImage) {
-      setError('Profile picture is required');
+    if (photos.length < 3) {
+      setError('At least 3 photos are required');
+      return;
+    }
+    if (photos.length > 6) {
+      setError('Maximum 6 photos allowed');
       return;
     }
     if (!bio.trim()) {
@@ -115,13 +97,14 @@ export function ProfileForm({ walletAddress, onSuccess }: ProfileFormProps) {
       setLoading(true);
       setError('');
 
-      // Upload image first
-      const imagePath = await uploadProfileImage(profileImage, walletAddress);
+      // Upload all photos
+      const uploadPromises = photos.map(photo => uploadProfileImage(photo));
+      const photoPaths = await Promise.all(uploadPromises);
 
-      // Create profile
+      // Create profile with first photo as main image
       await createProfile(walletAddress, {
         name: name.trim(),
-        profile_image_path: imagePath,
+        profile_image_path: photoPaths[0],
         bio: bio.trim(),
         bio_prompt_type: bioPrompt,
         interests,
@@ -158,32 +141,22 @@ export function ProfileForm({ walletAddress, onSuccess }: ProfileFormProps) {
           </div>
         </div>
 
-        {/* Profile Picture Upload */}
+        {/* Multi-Photo Upload */}
         <div>
-          <Label htmlFor="image" className="text-sm text-muted-foreground">
-            Profile Picture
+          <Label className="text-sm text-muted-foreground">
+            Profile Photos (3-6 required)
           </Label>
-          <input
-            id="image"
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
-            onChange={handleImageSelect}
-            className="mt-1 block w-full text-sm text-muted-foreground
-              file:mr-4 file:py-2 file:px-4
-              file:rounded-lg file:border-0
-              file:text-sm file:font-medium
-              file:bg-primary/20 file:text-primary
-              hover:file:bg-primary/30 cursor-pointer"
-          />
-          {imagePreview && (
-            <div className="mt-2">
-              <img
-                src={imagePreview}
-                alt="Preview"
-                className="w-24 h-24 rounded-full object-cover border-2 border-white/10"
-              />
-            </div>
-          )}
+          <div className="mt-2">
+            <MultiPhotoUpload
+              photos={photos}
+              onPhotosChange={setPhotos}
+              maxPhotos={6}
+              required={3}
+            />
+          </div>
+          <p className="text-xs text-muted-foreground mt-2">
+            Upload 3-6 photos. First photo will be your main profile picture.
+          </p>
         </div>
 
         {/* Bio Prompt Selection */}
@@ -323,7 +296,7 @@ export function ProfileForm({ walletAddress, onSuccess }: ProfileFormProps) {
       {/* Preview Column */}
       <ProfilePreview
         name={name}
-        imagePreview={imagePreview}
+        imagePreview={photos.length > 0 ? URL.createObjectURL(photos[0]) : ''}
         bio={bio}
         bioPrompt={bioPrompt}
         interests={interests}

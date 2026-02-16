@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useWallet } from '@demox-labs/aleo-wallet-adapter-react';
-import { getProfile } from '@/lib/supabase/profile';
+import { getProfile } from '@/lib/storage/profile';
 import type { VerificationRecord } from '@/lib/aleo/types';
 
 interface BlissSession {

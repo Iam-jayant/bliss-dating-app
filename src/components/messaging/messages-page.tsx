@@ -20,7 +20,7 @@ import { Input } from '@/components/ui/input';
 import { useWallet } from '@demox-labs/aleo-wallet-adapter-react';
 import { WalletMultiButton } from '@demox-labs/aleo-wallet-adapter-reactui';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { getProfile, getProfileByHash, getProfileImageUrl } from '@/lib/supabase/profile';
+import { getProfile, getProfileByHash, getProfileImageUrl } from '@/lib/storage/profile';
 import { getMutualMatches } from '@/lib/matching/compatibility-service';
 import {
   saveMessage,
@@ -130,9 +130,9 @@ export default function MessagesPage() {
     try {
       const mutualMatchHashes = getMutualMatches(myHash);
       
-      const chatList: Chat[] = mutualMatchHashes
-        .map((walletHash: string) => {
-          const matchProfile = getProfileByHash(walletHash);
+      const chatList: Chat[] = (await Promise.all(
+        mutualMatchHashes.map(async (walletHash: string) => {
+          const matchProfile = await getProfileByHash(walletHash);
           if (!matchProfile) return null;
 
           const chatMessages = getChatMessages(myHash, walletHash);
@@ -149,7 +149,7 @@ export default function MessagesPage() {
             unreadCount,
           } as Chat;
         })
-        .filter((c): c is Chat => c !== null);
+      )).filter((c): c is Chat => c !== null);
 
       // Sort by last message time
       chatList.sort((a, b) => {

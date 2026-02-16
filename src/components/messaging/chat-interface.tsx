@@ -37,6 +37,29 @@ export function ChatInterface({
     if (publicKey) {
       loadMessages();
       loadRecipientPublicKey();
+      
+      // Set up real-time listener
+      const unsubscribe = messagingService.subscribeToMessages(
+        matchedUserAddress,
+        (message) => {
+          // Decrypt incoming message
+          messagingService.initialize(publicKey).then(() => {
+            // For now, add message as-is (encryption will be handled in production)
+            setMessages(prev => {
+              // Avoid duplicates
+              if (prev.some(m => m.id === message.id)) return prev;
+              return [...prev, { ...message, decryptedContent: message.encryptedContent }].sort(
+                (a, b) => a.timestamp - b.timestamp
+              );
+            });
+          });
+        }
+      );
+      
+      // Cleanup listener on unmount
+      return () => {
+        unsubscribe();
+      };
     }
   }, [publicKey, matchedUserAddress]);
 

@@ -3,7 +3,7 @@
 import { usePathname, useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { Button } from '@/components/ui/button';
-import { Heart, User, LogOut, MessageCircle, Sparkles, Settings } from 'lucide-react';
+import { Heart, User, LogOut, MessageCircle, Sparkles, Settings, HeartHandshake, Shield } from 'lucide-react';
 import { useWallet } from '@demox-labs/aleo-wallet-adapter-react';
 import { cn } from '@/lib/utils';
 
@@ -73,6 +73,21 @@ export function AppNav() {
         <Button
           variant="ghost"
           size="sm"
+          onClick={() => router.push('/likes')}
+          className={cn(
+            'rounded-xl h-12 w-12 p-0 transition-all',
+            pathname === '/likes' 
+              ? 'bg-primary text-primary-foreground hover:bg-primary/90' 
+              : 'hover:bg-muted'
+          )}
+          title="Who Liked You"
+        >
+          <HeartHandshake className="w-5 h-5" />
+        </Button>
+
+        <Button
+          variant="ghost"
+          size="sm"
           onClick={() => router.push('/messages')}
           className={cn(
             'rounded-xl h-12 w-12 p-0 transition-all',
@@ -83,6 +98,21 @@ export function AppNav() {
           title="Messages"
         >
           <MessageCircle className="w-5 h-5" />
+        </Button>
+
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => router.push('/safety')}
+          className={cn(
+            'rounded-xl h-12 w-12 p-0 transition-all',
+            pathname === '/safety' 
+              ? 'bg-primary text-primary-foreground hover:bg-primary/90' 
+              : 'hover:bg-muted'
+          )}
+          title="Safety Center"
+        >
+          <Shield className="w-5 h-5" />
         </Button>
 
         <Button

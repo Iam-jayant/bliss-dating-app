@@ -10,9 +10,9 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useWallet } from '@demox-labs/aleo-wallet-adapter-react';
 import { WalletMultiButton } from '@demox-labs/aleo-wallet-adapter-reactui';
 import { useRouter } from 'next/navigation';
-import { getProfile, getProfileByHash, getProfileImageUrl } from '@/lib/supabase/profile';
+import { getProfile, getProfileByHash, getProfileImageUrl } from '@/lib/storage/profile';
 import { getMutualMatches } from '@/lib/matching/compatibility-service';
-import type { ProfileData } from '@/lib/supabase/types';
+import type { ProfileData } from '@/lib/storage/types';
 
 interface Match {
   walletAddress: string;
@@ -58,7 +58,7 @@ export default function MatchesPage() {
       // Load full profile data for each match
       const matchPromises = mutualMatchWallets.map(async (walletHash: string) => {
         try {
-          const matchProfile = getProfileByHash(walletHash);
+          const matchProfile = await getProfileByHash(walletHash);
           if (!matchProfile) return null;
 
           // Get match timestamp from localStorage

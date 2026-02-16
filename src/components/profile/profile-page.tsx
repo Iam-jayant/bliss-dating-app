@@ -17,8 +17,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { CheckCircle2, Edit, Loader2, Save, X, Camera, Shield, LogOut } from 'lucide-react';
-import { getProfile, getProfileImageUrl, updateProfile, uploadProfileImage } from '@/lib/supabase/profile';
-import type { ProfileData, BioPromptType, DatingIntent } from '@/lib/supabase/types';
+import { getProfile, getProfileImageUrl, updateProfile, uploadProfileImage } from '@/lib/storage/profile';
+import type { ProfileData, BioPromptType, DatingIntent } from '@/lib/storage/types';
 
 function getDisplayImage(imagePath: string | undefined, name: string): string {
   if (!imagePath || imagePath.startsWith('mock_image_')) {
@@ -40,10 +40,10 @@ export function ProfilePage() {
   const [saving, setSaving] = useState(false);
   const [editName, setEditName] = useState('');
   const [editBio, setEditBio] = useState('');
-  const [editBioPrompt, setEditBioPrompt] = useState<BioPromptType>('Two truths and a lie');
+  const [editBioPrompt, setEditBioPrompt] = useState<BioPromptType>('interests');
   const [editInterests, setEditInterests] = useState<string[]>([]);
   const [editInterestInput, setEditInterestInput] = useState('');
-  const [editIntent, setEditIntent] = useState<DatingIntent>('Open to explore');
+  const [editIntent, setEditIntent] = useState<DatingIntent>('not_sure');
   const [editImage, setEditImage] = useState<File | null>(null);
   const [editImagePreview, setEditImagePreview] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -122,7 +122,7 @@ export function ProfilePage() {
 
       let imagePath = profile.profile_image_path;
       if (editImage) {
-        imagePath = await uploadProfileImage(editImage, publicKey);
+        imagePath = await uploadProfileImage(editImage);
       }
 
       await updateProfile(publicKey, {
@@ -296,7 +296,6 @@ export function ProfilePage() {
                     <>
                       <div className="flex items-center gap-2 mb-1">
                         <h2 className="font-headline text-3xl italic text-foreground">{profile.name}</h2>
-                        {profile.is_verified && <CheckCircle2 className="w-6 h-6 text-primary" />}
                       </div>
                       <p className="text-sm text-muted-foreground">Looking for {profile.dating_intent}</p>
                     </>

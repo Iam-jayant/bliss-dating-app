@@ -31,7 +31,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { getUserLocation } from '@/lib/location/geohash-service';
 import { profileService } from '@/lib/storage/profile-service';
 
-type OnboardingStep = 'welcome' | 'wallet' | 'age' | 'location' | 'profile' | 'privacy' | 'complete';
+type OnboardingStep = 'welcome' | 'id' | 'age' | 'location' | 'profile' | 'privacy' | 'complete';
 
 const INTEREST_OPTIONS = ['Travel', 'Fitness', 'Music', 'Art', 'Food', 'Tech', 'Books', 'Outdoors'];
 const INTENT_OPTIONS = ['Long-term', 'Short-term', 'Friends', 'Open to explore'];
@@ -61,7 +61,7 @@ export function NewOnboardingFlow() {
 
   const progress = {
     welcome: 0,
-    wallet: 15,
+    id: 15,
     age: 30,
     location: 45,
     profile: 70,
@@ -70,7 +70,7 @@ export function NewOnboardingFlow() {
   }[step];
 
   useEffect(() => {
-    if (connected && publicKey && step === 'wallet') {
+    if (connected && publicKey && step === 'id') {
       setStep('age');
     }
   }, [connected, publicKey, step]);
@@ -206,7 +206,7 @@ export function NewOnboardingFlow() {
               <Button
                 className="w-full bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600"
                 size="lg"
-                onClick={() => setStep('wallet')}
+                onClick={() => setStep('id')}
               >
                 Get Started <ArrowRight className="ml-2 w-5 h-5" />
               </Button>
@@ -215,7 +215,7 @@ export function NewOnboardingFlow() {
         )}
 
         {/* Wallet Connection */}
-        {step === 'wallet' && (
+        {step === 'id' && (
           <motion.div
             key="wallet"
             initial={{ opacity: 0, x: 100 }}
@@ -226,9 +226,9 @@ export function NewOnboardingFlow() {
             <Card className="p-8">
               <div className="text-center mb-6">
                 <Shield className="w-16 h-16 mx-auto mb-4 text-purple-500" />
-                <h2 className="text-2xl font-bold mb-2">Connect Your Wallet</h2>
+                <h2 className="text-2xl font-bold mb-2">Create Your Bliss ID</h2>
                 <p className="text-gray-600 text-sm">
-                  Your wallet is your identity. No email, no password needed.
+                  Your secure identity. No email, no password needed.
                 </p>
               </div>
 
@@ -236,9 +236,9 @@ export function NewOnboardingFlow() {
                 <div className="flex items-start gap-2">
                   <Lock className="w-4 h-4 text-blue-600 flex-shrink-0 mt-0.5" />
                   <div>
-                    <p className="text-sm font-semibold text-blue-900">Why wallet login?</p>
+                    <p className="text-sm font-semibold text-blue-900">Why Bliss ID?</p>
                     <p className="text-xs text-blue-700 mt-1">
-                      Wallets provide cryptographic security without storing passwords. You're in full control.
+                      Your Bliss ID is cryptographically secured and gives you full control over your data.
                     </p>
                   </div>
                 </div>
@@ -250,13 +250,13 @@ export function NewOnboardingFlow() {
                 onClick={() => {/* Wallet connection handled by WalletMultiButton */}}
                 disabled={loading}
               >
-                {loading ? 'Connecting...' : 'Connect Leo Wallet'}
+                {loading ? 'Creating...' : 'Create My Bliss ID'}
               </Button>
 
               <p className="text-xs text-center text-gray-500 mt-4">
-                Don't have a wallet?{' '}
+                Need help?{' '}
                 <a href="https://leo.app" target="_blank" className="text-pink-600 hover:underline">
-                  Download Leo Wallet
+                  Learn more about Bliss ID
                 </a>
               </p>
             </Card>
@@ -588,7 +588,7 @@ export function NewOnboardingFlow() {
                     </li>
                     <li className="flex items-center gap-2">
                       <Lock className="w-4 h-4 text-blue-500" />
-                      <span>Wallet address</span>
+                      <span>Account ID</span>
                     </li>
                   </ul>
                 </div>

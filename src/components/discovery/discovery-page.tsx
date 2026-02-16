@@ -15,15 +15,15 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence, PanInfo } from 'framer-motion';
-import { Heart, X, Sparkles, MapPin, Info, SlidersHorizontal } from 'lucide-react';
+import { Heart, X, Sparkles, MapPin, Info, SlidersHorizontal, Flag } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useWallet } from '@demox-labs/aleo-wallet-adapter-react';
 import { WalletMultiButton } from '@demox-labs/aleo-wallet-adapter-reactui';
-import { getAllProfiles, getProfile, getProfileByHash, getProfileImageUrl } from '@/lib/supabase/profile';
-import type { ProfileData } from '@/lib/supabase/types';
+import { getAllProfiles, getProfile, getProfileByHash, getProfileImageUrl } from '@/lib/storage/profile';
+import type { ProfileData } from '@/lib/storage/types';
 import { 
   calculateEnhancedCompatibility, 
   recordLike, 
@@ -33,6 +33,10 @@ import {
 } from '@/lib/matching/compatibility-service';
 import { MatchModal } from './match-modal';
 import { DiscoveryFilters, type FilterState } from './discovery-filters';
+import { ReportModal } from '@/components/safety/report-modal';
+import { UndoButton } from './undo-button';
+import { SuperLikeButton } from './super-like-button';
+import { PhotoGallery } from '@/components/profile/photo-gallery';
 
 interface DiscoveryProfile {
   walletAddress: string; // This is wallet_hash from storage
@@ -94,6 +98,10 @@ export default function DiscoveryPage() {
     interests: [],
     minCompatibility: 0,
   });
+  const [showReport, setShowReport] = useState(false);
+  const [swipeHistory, setSwipeHistory] = useState<string[]>([]);
+  const [superLikesUsed, setSuperLikesUsed] = useState(0);
+  const [isPremium, setIsPremium] = useState(false);
 
   const currentProfile = profiles[currentIndex];
   const canSwipe = swipeLimit === -1 || dailySwipesUsed < swipeLimit;
@@ -109,7 +117,7 @@ export default function DiscoveryPage() {
     try {
       setLoading(true);
       
-      const localProfiles = getAllProfiles();
+      const localProfiles = await getAllProfiles();
       
       if (localProfiles.length > 0) {
         let currentUserHash: string | undefined;
@@ -223,6 +231,17 @@ export default function DiscoveryPage() {
     loadCurrentUserProfile();
   }, [loadProfiles, loadUserLimits, loadCurrentUserProfile]);
 
+  useEffect(() => {
+    const checkPremium = () => {
+      const sub = localStorage.getItem('bliss_subscription');
+      if (sub) {
+        const subscription = JSON.parse(sub);
+        setIsPremium(subscription.tier === 'premium' || subscription.tier === 'plus');
+      }
+    };
+    checkPremium();
+  }, []);
+
   // ─── SWIPE HANDLERS ────────────────────────────────────────────
 
   const handleSwipe = async (direction: 'left' | 'right') => {
@@ -241,6 +260,9 @@ export default function DiscoveryPage() {
     const currentUsed = parseInt(localStorage.getItem(usageKey) || '0', 10);
     localStorage.setItem(usageKey, String(currentUsed + 1));
 
+    // Track in history
+    setSwipeHistory(prev => [...prev, currentProfile.walletAddress].slice(-5));
+
     if (direction === 'right') {
       await handleLike(currentProfile.walletAddress);
     } else {
@@ -257,17 +279,17 @@ export default function DiscoveryPage() {
       // Get current user's profile (hashes raw publicKey → correct)
       const myProfile = await getProfile(publicKey);
       // Get target profile by hash directly (NO double-hashing!)
-      const targetProfile = getProfileByHash(targetWalletHash);
+      const targetProfile = await getProfileByHash(targetWalletHash);
       
       if (!myProfile || !targetProfile) {
         console.warn('Profile lookup failed — recording like with hashes only');
         const { hashWalletAddress } = await import('@/lib/wallet-hash');
         const myHash = await hashWalletAddress(publicKey);
-        recordLike(myHash, targetWalletHash, []);
+        recordLike(myHash, targetWalletHash);
         return;
       }
       
-      recordLike(myProfile.wallet_hash, targetWalletHash, myProfile.interests);
+      recordLike(myProfile.wallet_hash, targetWalletHash);
       console.log('❤️ Liked:', targetProfile.name);
 
       const isMutualMatch = checkMutualMatch(
@@ -303,13 +325,92 @@ export default function DiscoveryPage() {
       }
       
       recordPass(myProfile.wallet_hash, targetWalletHash);
-      const targetProfile = getProfileByHash(targetWalletHash);
+      const targetProfile = await getProfileByHash(targetWalletHash);
       if (targetProfile) {
         console.log('👎 Passed:', targetProfile.name);
       }
     } catch (error) {
       console.error('Failed to record pass:', error);
     }
+  };
+
+  const handleUndo = () => {
+    if (swipeHistory.length === 0) return;
+    
+    const lastUserHash = swipeHistory[swipeHistory.length - 1];
+    setSwipeHistory(prev => prev.slice(0, -1));
+    
+    // Remove from likes/passes storage
+    const likes = JSON.parse(localStorage.getItem('bliss_likes_v2') || '[]');
+    const passes = JSON.parse(localStorage.getItem('bliss_passes_v2') || '[]');
+    
+    const filteredLikes = likes.filter((l: any) => l.to !== lastUserHash);
+    const filteredPasses = passes.filter((p: any) => p.to !== lastUserHash);
+    
+    localStorage.setItem('bliss_likes_v2', JSON.stringify(filteredLikes));
+    localStorage.setItem('bliss_passes_v2', JSON.stringify(filteredPasses));
+    
+    // Decrease swipe count
+    if (dailySwipesUsed > 0) {
+      setDailySwipesUsed(prev => prev - 1);
+      const today = new Date().toISOString().split('T')[0];
+      const usageKey = `bliss_swipes_${publicKey}_${today}`;
+      const currentUsed = parseInt(localStorage.getItem(usageKey) || '0', 10);
+      if (currentUsed > 0) {
+        localStorage.setItem(usageKey, String(currentUsed - 1));
+      }
+    }
+    
+    // Move back one profile
+    if (currentIndex > 0) {
+      setCurrentIndex(prev => prev - 1);
+    }
+  };
+
+  const handleSuperLike = async () => {
+    if (!currentProfile || !publicKey) return;
+    if (!canSwipe) return;
+    
+    setExitDirection('right');
+    setDailySwipesUsed(prev => prev + 1);
+    setSuperLikesUsed(prev => prev + 1);
+    
+    // Persist swipe count
+    const today = new Date().toISOString().split('T')[0];
+    const usageKey = `bliss_swipes_${publicKey}_${today}`;
+    const currentUsed = parseInt(localStorage.getItem(usageKey) || '0', 10);
+    localStorage.setItem(usageKey, String(currentUsed + 1));
+    
+    // Track in history
+    setSwipeHistory(prev => [...prev, currentProfile.walletAddress].slice(-5));
+    
+    // Track as super like
+    try {
+      const myProfile = await getProfile(publicKey);
+      const targetProfile = await getProfileByHash(currentProfile.walletAddress);
+      
+      if (myProfile && targetProfile) {
+        recordLike(myProfile.wallet_hash, currentProfile.walletAddress, true);
+        console.log('⭐ Super Liked:', targetProfile.name);
+        
+        // Check for mutual match
+        const isMutualMatch = checkMutualMatch(
+          myProfile.wallet_hash,
+          currentProfile.walletAddress,
+          myProfile,
+          targetProfile
+        );
+        
+        if (isMutualMatch) {
+          setMatchedProfile(currentProfile);
+          setShowMatchModal(true);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to record super like:', error);
+    }
+    
+    setCurrentIndex(prev => prev + 1);
   };
 
   const handleDragEnd = (_event: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
@@ -562,23 +663,18 @@ export default function DiscoveryPage() {
                 transition={{ type: "spring", stiffness: 300, damping: 30 }}
               >
                 <Card className="h-full overflow-hidden shadow-2xl border border-primary/20 bg-card/95 backdrop-blur-sm">
-                  {/* Profile Image */}
-                  <div className="relative h-[65%] overflow-hidden bg-primary/10">
-                    <img
-                      src={getDisplayImageUrl(currentProfile.imageCid, currentProfile.name)}
-                      alt={currentProfile.name}
-                      className="w-full h-full object-cover"
-                      onError={(e) => {
-                        // Fallback if image fails to load
-                        (e.target as HTMLImageElement).src = `https://api.dicebear.com/9.x/notionists/svg?seed=${encodeURIComponent(currentProfile.name)}&backgroundColor=c0aede`;
-                      }}
+                  {/* Photo Gallery */}
+                  <div className="relative h-[65%] overflow-hidden">
+                    <PhotoGallery 
+                      photos={currentProfile.imageCid ? [getDisplayImageUrl(currentProfile.imageCid, currentProfile.name)] : []} 
+                      userName={currentProfile.name} 
                     />
 
                     {/* Gradient for text readability */}
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent pointer-events-none z-10" />
 
                     {/* Top Badges */}
-                    <div className="absolute top-4 left-4 right-4 flex items-start justify-between">
+                    <div className="absolute top-4 left-4 right-4 flex items-start justify-between z-20">
                       {currentProfile.compatibilityScore !== undefined && currentProfile.compatibilityScore > 0 && (
                         <motion.div
                           initial={{ scale: 0 }}
@@ -600,7 +696,7 @@ export default function DiscoveryPage() {
                     </div>
 
                     {/* Bottom Info */}
-                    <div className="absolute bottom-0 left-0 right-0 p-6 text-white">
+                    <div className="absolute bottom-0 left-0 right-0 p-6 text-white z-20">
                       <motion.h2
                         initial={{ y: 20, opacity: 0 }}
                         animate={{ y: 0, opacity: 1 }}
@@ -699,13 +795,20 @@ export default function DiscoveryPage() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2 }}
-          className="max-w-md mx-auto mt-8 flex items-center justify-center gap-8"
+          className="max-w-md mx-auto mt-8 flex items-center justify-center gap-4"
         >
+          <UndoButton 
+            onUndo={handleUndo}
+            disabled={swipeHistory.length === 0}
+            isPremium={isPremium}
+            onUpgradeClick={() => window.location.href = '/subscription'}
+          />
+          
           <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.95 }}>
             <Button
               size="lg"
               variant="outline"
-              className="rounded-full w-16 h-16 border border-primary/20 shadow-2xl bg-card/80 backdrop-blur-sm hover:bg-card group transition-all duration-200"
+              className="rounded-full w-16 h-16 border-2 border-primary/20 shadow-2xl bg-card/80 backdrop-blur-sm hover:bg-card group transition-all duration-200"
               onClick={() => handleSwipe('left')}
               disabled={!publicKey || !canSwipe}
               title={!publicKey ? 'Connect wallet to swipe' : 'Pass'}
@@ -714,26 +817,34 @@ export default function DiscoveryPage() {
             </Button>
           </motion.div>
 
-          <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
-            <Button
-              size="lg"
-              variant="outline"
-              className="rounded-full w-14 h-14 border border-primary/20 shadow-lg bg-card/80 backdrop-blur-sm hover:bg-card transition-all duration-200"
-              disabled
-            >
-              <Info className="w-5 h-5 text-primary" />
-            </Button>
-          </motion.div>
+          <SuperLikeButton
+            onSuperLike={handleSuperLike}
+            disabled={!publicKey || !canSwipe}
+            dailyLimitReached={superLikesUsed >= (isPremium ? 999 : 1)}
+          />
 
           <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.95 }}>
             <Button
               size="lg"
-              className="rounded-full w-16 h-16 border-0 shadow-2xl bg-primary hover:bg-primary/90 transition-all duration-300 group"
+              className="rounded-full w-16 h-16 border-0 shadow-2xl bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 transition-all duration-300 group"
               onClick={() => handleSwipe('right')}
               disabled={!publicKey || !canSwipe}
               title={!publicKey ? 'Connect wallet to swipe' : 'Like'}
             >
-              <Heart className="w-8 h-8 text-primary-foreground group-hover:scale-110 transition-transform" />
+              <Heart className="w-8 h-8 text-white fill-current group-hover:scale-110 transition-transform" />
+            </Button>
+          </motion.div>
+
+          <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+            <Button
+              size="lg"
+              variant="ghost"
+              className="rounded-full w-12 h-12 border border-primary/10 shadow-lg bg-card/50 backdrop-blur-sm hover:bg-card transition-all duration-200"
+              onClick={() => setShowReport(true)}
+              disabled={!publicKey || !currentProfile}
+              title="Report Profile"
+            >
+              <Flag className="w-5 h-5 text-muted-foreground" />
             </Button>
           </motion.div>
         </motion.div>
@@ -760,6 +871,15 @@ export default function DiscoveryPage() {
         matchImage={matchedProfile ? getDisplayImageUrl(matchedProfile.imageCid, matchedProfile.name) : undefined}
         userImage={currentUserProfile?.profile_image_path ? getProfileImageUrl(currentUserProfile.profile_image_path) : undefined}
         userName={currentUserProfile?.name || 'You'}
+      />
+
+      {/* Report Modal */}
+      <ReportModal
+        isOpen={showReport}
+        onClose={() => setShowReport(false)}
+        reportedUserAddress={currentProfile?.walletAddress || ''}
+        reportedUserName={currentProfile?.name || ''}
+        context="profile"
       />
     </div>
   );

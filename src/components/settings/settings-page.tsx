@@ -25,7 +25,7 @@ import {
 import { useWallet } from '@demox-labs/aleo-wallet-adapter-react';
 import { WalletMultiButton } from '@demox-labs/aleo-wallet-adapter-reactui';
 import { useRouter } from 'next/navigation';
-import { getProfile, exportProfileData } from '@/lib/supabase/profile';
+import { getProfile, exportProfileData } from '@/lib/storage/profile';
 
 const SETTINGS_KEY = 'bliss_settings';
 
@@ -103,8 +103,9 @@ export default function SettingsPage() {
     });
   };
 
-  const handleExportData = () => {
-    const data = exportProfileData();
+  const handleExportData = async () => {
+    if (!publicKey) return;
+    const data = await exportProfileData(publicKey);
     const blob = new Blob([data], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');

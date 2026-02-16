@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useWallet } from '@demox-labs/aleo-wallet-adapter-react';
 import { useRouter, usePathname } from 'next/navigation';
-import { getProfile } from '@/lib/supabase/profile';
+import { getProfile } from '@/lib/storage/profile';
 
 /**
  * ProfileRedirect Component
