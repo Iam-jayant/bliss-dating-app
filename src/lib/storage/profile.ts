@@ -56,7 +56,11 @@ export function getProfileImageUrl(ipfsHash: string): string {
   if (ipfsHash.startsWith('http')) return ipfsHash;
   
   // Otherwise construct Pinata gateway URL
-  const gateway = process.env.NEXT_PUBLIC_PINATA_GATEWAY || 'gateway.pinata.cloud';
+  let gateway = process.env.NEXT_PUBLIC_PINATA_GATEWAY || 'gateway.pinata.cloud';
+  // If gateway is just an ID (no dots), append .mypinata.cloud
+  if (gateway && !gateway.includes('.')) {
+    gateway = `${gateway}.mypinata.cloud`;
+  }
   return `https://${gateway}/ipfs/${ipfsHash}`;
 }
 
@@ -138,10 +142,9 @@ export async function updateProfile(
  * Upload profile image to Pinata IPFS
  */
 export async function uploadProfileImage(file: File): Promise<string> {
-  const apiKey = process.env.NEXT_PUBLIC_PINATA_API_KEY;
-  const apiSecret = process.env.NEXT_PUBLIC_PINATA_SECRET;
+  const jwt = process.env.NEXT_PUBLIC_PINATA_JWT;
   
-  if (!apiKey || !apiSecret) {
+  if (!jwt) {
     throw new Error('Pinata API credentials not configured');
   }
   
@@ -151,8 +154,7 @@ export async function uploadProfileImage(file: File): Promise<string> {
   const response = await fetch('https://api.pinata.cloud/pinning/pinFileToIPFS', {
     method: 'POST',
     headers: {
-      'pinata_api_key': apiKey,
-      'pinata_secret_api_key': apiSecret,
+      'Authorization': `Bearer ${jwt}`,
     },
     body: formData,
   });

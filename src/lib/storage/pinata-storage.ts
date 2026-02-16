@@ -41,6 +41,10 @@ export class PinataStorageService {
   async initialize() {
     this.jwt = process.env.NEXT_PUBLIC_PINATA_JWT || '';
     this.gateway = process.env.NEXT_PUBLIC_PINATA_GATEWAY || 'gateway.pinata.cloud';
+    // If gateway is just an ID (no dots), append .mypinata.cloud
+    if (this.gateway && !this.gateway.includes('.')) {
+      this.gateway = `${this.gateway}.mypinata.cloud`;
+    }
     
     if (!this.jwt) {
       throw new Error('Pinata JWT not configured. Get one free at https://app.pinata.cloud/');
