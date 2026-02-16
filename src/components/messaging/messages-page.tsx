@@ -22,6 +22,7 @@ import { WalletMultiButton } from '@demox-labs/aleo-wallet-adapter-reactui';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { getProfile, getProfileByHash, getProfileImageUrl } from '@/lib/storage/profile';
 import { getMutualMatches } from '@/lib/matching/compatibility-service';
+import { seedDemoData } from '@/lib/seed-profiles';
 import {
   saveMessage,
   getChatMessages,
@@ -128,6 +129,9 @@ export default function MessagesPage() {
     
     setLoading(true);
     try {
+      // Ensure demo data is seeded (idempotent)
+      seedDemoData(myHash);
+
       const mutualMatchHashes = getMutualMatches(myHash);
       
       const chatList: Chat[] = (await Promise.all(

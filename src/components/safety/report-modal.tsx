@@ -66,7 +66,17 @@ export function ReportModal({
       // Store encrypted report in Gun.js
       if (typeof window !== 'undefined') {
         try {
-          const Gun = (await import('gun')).default;
+          // Load Gun.js from CDN to avoid Turbopack bundling issues
+          if (!(window as any).Gun) {
+            await new Promise<void>((resolve, reject) => {
+              const script = document.createElement('script');
+              script.src = 'https://cdn.jsdelivr.net/npm/gun/gun.js';
+              script.onload = () => resolve();
+              script.onerror = () => reject(new Error('Failed to load Gun.js'));
+              document.head.appendChild(script);
+            });
+          }
+          const Gun = (window as any).Gun;
           const gun = Gun({
             peers: ['https://gun-manhattan.herokuapp.com/gun'],
           });

@@ -21,13 +21,31 @@
 
 import type { ProfileData } from './types';
 
-// Gun.js dynamic import to avoid SSR issues
+// Gun.js loaded via CDN script tag to avoid Turbopack/Webpack bundling issues
+// Gun.js uses dynamic require() internally which bundlers can't resolve
 let gunInstance: any = null;
+let gunLoadPromise: Promise<any> | null = null;
 
 const GUN_PEERS = [
   'https://gun-manhattan.herokuapp.com/gun',
   'https://gun-us.herokuapp.com/gun',
 ];
+
+/**
+ * Load Gun.js from CDN (avoids bundler issues with dynamic require)
+ */
+function loadGunScript(): Promise<any> {
+  if (typeof window === 'undefined') return Promise.resolve(null);
+  if ((window as any).Gun) return Promise.resolve((window as any).Gun);
+
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/gun/gun.js';
+    script.onload = () => resolve((window as any).Gun);
+    script.onerror = () => reject(new Error('Failed to load Gun.js from CDN'));
+    document.head.appendChild(script);
+  });
+}
 
 /**
  * Get or create the Gun.js instance (singleton, client-side only)
@@ -37,8 +55,13 @@ async function getGun(): Promise<any> {
   
   if (gunInstance) return gunInstance;
 
+  if (!gunLoadPromise) {
+    gunLoadPromise = loadGunScript();
+  }
+
   try {
-    const Gun = (await import('gun')).default;
+    const Gun = await gunLoadPromise;
+    if (!Gun) return null;
     gunInstance = Gun({ peers: GUN_PEERS, localStorage: true });
     console.log('🔫 Gun.js initialized with P2P peers');
     return gunInstance;

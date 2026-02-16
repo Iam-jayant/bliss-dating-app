@@ -1,45 +1,32 @@
 /**
- * Discovery Page - Card-based profile browsing with swipe actions
- * Privacy-first: Only shows profiles that match user's criteria
- * 
- * FIXES APPLIED:
- * - Double-hash bug: uses getProfileByHash() for already-hashed wallet addresses
- * - Broken mock images: uses DiceBear API for placeholder avatars
- * - Removed all gradient backgrounds (consistent with landing page)
- * - Fixed duplicate geolocation call
- * - Added discovery filters
- * - Proper swipe counter persistence
+ * Discovery Page — Full-viewport card-based profile browsing
+ * Inspired by Tinder/Bumble/Hinge: immersive photo cards, floating actions
  */
 
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence, PanInfo } from 'framer-motion';
-import { Heart, X, Sparkles, MapPin, Info, SlidersHorizontal, Flag } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Heart, X, Star, RotateCcw, ChevronDown, ChevronUp, SlidersHorizontal, Flag } from 'lucide-react';
 import { useWallet } from '@demox-labs/aleo-wallet-adapter-react';
 import { WalletMultiButton } from '@demox-labs/aleo-wallet-adapter-reactui';
 import { getAllProfiles, getProfile, getProfileByHash, getProfileImageUrl } from '@/lib/storage/profile';
 import type { ProfileData } from '@/lib/storage/types';
-import { 
-  calculateEnhancedCompatibility, 
-  recordLike, 
-  recordPass, 
+import { seedDemoData } from '@/lib/seed-profiles';
+import {
+  calculateEnhancedCompatibility,
+  recordLike,
+  recordPass,
   checkMutualMatch,
-  hasActedOn 
+  hasActedOn
 } from '@/lib/matching/compatibility-service';
 import { MatchModal } from './match-modal';
 import { DiscoveryFilters, type FilterState } from './discovery-filters';
 import { ReportModal } from '@/components/safety/report-modal';
-import { UndoButton } from './undo-button';
-import { SuperLikeButton } from './super-like-button';
-import { PhotoGallery } from '@/components/profile/photo-gallery';
+import Image from 'next/image';
 
 interface DiscoveryProfile {
-  walletAddress: string; // This is wallet_hash from storage
+  walletAddress: string;
   name: string;
   bio: string;
   bioPrompt: string;
@@ -52,33 +39,25 @@ interface DiscoveryProfile {
 
 const SWIPE_THRESHOLD = 100;
 
-/**
- * Get displayable image URL for a profile.
- * Handles: IPFS CIDs, local fallback paths, data URLs, mock profiles, and missing images
- */
+/** Resolve any image source to a displayable URL */
 function getDisplayImageUrl(imageCid: string, profileName: string): string {
-  if (!imageCid) {
-    // No image at all — generate a unique DiceBear avatar
+  if (!imageCid || imageCid.startsWith('mock_image_')) {
     return `https://api.dicebear.com/9.x/notionists/svg?seed=${encodeURIComponent(profileName)}&backgroundColor=c0aede`;
   }
-
-  // Mock profile images — use DiceBear with the profile name as seed
-  if (imageCid.startsWith('mock_image_')) {
-    return `https://api.dicebear.com/9.x/notionists/svg?seed=${encodeURIComponent(profileName)}&backgroundColor=c0aede`;
-  }
-
-  // Local fallback images (from uploadProfileImage fallback)
-  if (imageCid.startsWith('local:')) {
-    return getProfileImageUrl(imageCid);
-  }
-
-  // Data URLs (inline base64)
-  if (imageCid.startsWith('data:')) {
-    return imageCid;
-  }
-
-  // Real IPFS CID — use Pinata gateway
+  if (imageCid.startsWith('local:') || imageCid.startsWith('data:')) return imageCid.startsWith('data:') ? imageCid : getProfileImageUrl(imageCid);
   return getProfileImageUrl(imageCid);
+}
+
+/** Format dating intent to a human-friendly label */
+function formatIntent(intent: string): string {
+  const map: Record<string, string> = {
+    long_term: 'Long-term',
+    short_term: 'Something casual',
+    casual: 'Casual',
+    friendship: 'Friendship',
+    not_sure: 'Open to explore',
+  };
+  return map[intent] || intent;
 }
 
 export default function DiscoveryPage() {
@@ -102,6 +81,8 @@ export default function DiscoveryPage() {
   const [swipeHistory, setSwipeHistory] = useState<string[]>([]);
   const [superLikesUsed, setSuperLikesUsed] = useState(0);
   const [isPremium, setIsPremium] = useState(false);
+  const [showInfo, setShowInfo] = useState(false);
+  const [swipeIndicator, setSwipeIndicator] = useState<'like' | 'nope' | null>(null);
 
   const currentProfile = profiles[currentIndex];
   const canSwipe = swipeLimit === -1 || dailySwipesUsed < swipeLimit;
@@ -116,6 +97,13 @@ export default function DiscoveryPage() {
   const loadProfiles = useCallback(async () => {
     try {
       setLoading(true);
+
+      // Seed demo profiles on first visit (idempotent)
+      if (currentUserProfile?.wallet_hash) {
+        seedDemoData(currentUserProfile.wallet_hash);
+      } else {
+        seedDemoData();
+      }
       
       const localProfiles = await getAllProfiles();
       
@@ -421,449 +409,369 @@ export default function DiscoveryPage() {
     }
   };
 
-  // ─── LOADING STATE ─────────────────────────────────────────────
+  // ─── LOADING ────────────────────────────────────────────────
 
   if (loading) {
     return (
-      <div className="min-h-screen relative overflow-hidden pl-20 flex items-center justify-center">
-        <div className="fixed inset-0 -z-10 bg-background" />
-        <motion.div
-          initial={{ opacity: 0, scale: 0.9 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="text-center"
-        >
-          <motion.div
-            className="relative w-20 h-20 mx-auto mb-6"
-            animate={{ rotate: 360 }}
-            transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
-          >
-            <div className="absolute inset-0 rounded-full bg-primary/20" />
-            <div className="absolute inset-2 rounded-full bg-background" />
-            <div className="absolute inset-0 rounded-full border-4 border-transparent border-t-primary border-r-primary/50" />
-          </motion.div>
-          <motion.p
-            className="text-muted-foreground font-body font-medium"
-            animate={{ opacity: [0.5, 1, 0.5] }}
-            transition={{ duration: 2, repeat: Infinity }}
-          >
-            Finding your matches...
-          </motion.p>
+      <div className="fixed inset-0 pl-20 flex items-center justify-center bg-background">
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center gap-4">
+          <div className="relative w-14 h-14">
+            <motion.div
+              className="absolute inset-0 rounded-full border-[3px] border-primary/20"
+              style={{ borderTopColor: 'hsl(var(--primary))' }}
+              animate={{ rotate: 360 }}
+              transition={{ duration: 0.8, repeat: Infinity, ease: 'linear' }}
+            />
+          </div>
+          <p className="text-sm text-muted-foreground tracking-wide">Finding people near you...</p>
         </motion.div>
       </div>
     );
   }
 
-  // ─── DAILY LIMIT STATE ─────────────────────────────────────────
+  // ─── DAILY LIMIT ───────────────────────────────────────────
 
   if (!canSwipe) {
     return (
-      <div className="min-h-screen relative overflow-hidden pl-20 flex items-center justify-center p-4">
-        <div className="fixed inset-0 -z-10 bg-background" />
+      <div className="fixed inset-0 pl-20 flex items-center justify-center bg-background p-6">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="max-w-md w-full"
+          className="max-w-sm w-full text-center"
         >
-          <Card className="overflow-hidden border border-primary/20 shadow-2xl backdrop-blur-sm bg-card/90">
-            <div className="p-8 text-center">
-              <motion.div
-                initial={{ scale: 0 }}
-                animate={{ scale: 1 }}
-                transition={{ type: "spring", delay: 0.2 }}
-                className="w-20 h-20 mx-auto mb-6 rounded-full bg-primary/20 flex items-center justify-center"
-              >
-                <Sparkles className="w-10 h-10 text-primary" />
-              </motion.div>
-              <h2 className="text-3xl font-headline italic mb-3 text-primary">
-                Daily Limit Reached
-              </h2>
-              <p className="text-muted-foreground mb-6 leading-relaxed font-body">
-                You&apos;ve used all <span className="font-bold text-foreground">{swipeLimit}</span> swipes for today.
-                Upgrade to Premium for unlimited swipes!
-              </p>
-              <div className="space-y-3 mb-6">
-                <div className="flex items-center gap-3 text-sm text-muted-foreground bg-secondary rounded-lg p-3">
-                  <Heart className="w-4 h-4 text-primary" />
-                  <span>Unlimited daily swipes</span>
-                </div>
-                <div className="flex items-center gap-3 text-sm text-muted-foreground bg-secondary rounded-lg p-3">
-                  <Sparkles className="w-4 h-4 text-primary" />
-                  <span>See who liked you</span>
-                </div>
-              </div>
-              <Button className="w-full h-12 text-base font-semibold bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg">
-                Upgrade to Premium
-              </Button>
-              <p className="text-xs text-muted-foreground mt-4">
-                Reset in {24 - new Date().getHours()} hours
-              </p>
-            </div>
-          </Card>
+          <div className="text-5xl mb-5">✨</div>
+          <h2 className="text-2xl font-headline italic text-foreground mb-2">You&apos;re out of likes</h2>
+          <p className="text-muted-foreground text-sm leading-relaxed mb-8">
+            You&apos;ve used all {swipeLimit} likes for today. Come back tomorrow or go unlimited.
+          </p>
+          <button
+            className="w-full py-3.5 rounded-full bg-gradient-to-r from-pink-500 to-rose-500 text-white font-semibold text-sm tracking-wide hover:shadow-lg hover:shadow-pink-500/25 transition-all"
+            onClick={() => window.location.href = '/subscription'}
+          >
+            Get Unlimited
+          </button>
+          <p className="text-xs text-muted-foreground mt-4">
+            Resets in {24 - new Date().getHours()} hours
+          </p>
         </motion.div>
       </div>
     );
   }
 
-  // ─── NO MORE PROFILES STATE ────────────────────────────────────
+  // ─── NO MORE PROFILES ──────────────────────────────────────
 
   if (currentIndex >= profiles.length) {
     return (
-      <div className="min-h-screen relative overflow-hidden pl-20 flex items-center justify-center p-4">
-        <div className="fixed inset-0 -z-10 bg-background" />
+      <div className="fixed inset-0 pl-20 flex items-center justify-center bg-background p-6">
         <motion.div
-          initial={{ opacity: 0, scale: 0.9 }}
+          initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
-          className="max-w-md w-full"
+          className="max-w-sm w-full text-center"
         >
-          <Card className="overflow-hidden border border-primary/20 shadow-2xl backdrop-blur-sm bg-card/90">
-            <div className="p-8 text-center">
-              <motion.div
-                animate={{ rotate: [0, 10, -10, 0] }}
-                transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
-                className="text-6xl mb-4"
-              >
-                👋
-              </motion.div>
-              <h2 className="text-3xl font-headline italic mb-3 text-primary">
-                That&apos;s Everyone!
-              </h2>
-              <p className="text-muted-foreground mb-6 leading-relaxed font-body">
-                You&apos;ve seen all profiles in your area. Check back soon for new matches!
-              </p>
-              <div className="bg-secondary rounded-xl p-4 mb-6">
-                <p className="text-sm text-muted-foreground">
-                  💡 <span className="font-medium text-foreground">Tip:</span> Update your preferences or adjust filters to discover more people
-                </p>
-              </div>
-              <div className="flex gap-3">
-                <Button
-                  variant="outline"
-                  className="flex-1 border border-primary/20 hover:bg-secondary"
-                  onClick={() => { setCurrentIndex(0); loadProfiles(); }}
-                >
-                  Review Again
-                </Button>
-                <Button
-                  className="flex-1 bg-primary hover:bg-primary/90 text-primary-foreground"
-                  onClick={() => window.location.href = '/profile'}
-                >
-                  Update Profile
-                </Button>
-              </div>
-            </div>
-          </Card>
+          <div className="text-5xl mb-5">🫧</div>
+          <h2 className="text-2xl font-headline italic text-foreground mb-2">That&apos;s everyone</h2>
+          <p className="text-muted-foreground text-sm leading-relaxed mb-8">
+            You&apos;ve seen all profiles nearby. Check back soon for new people!
+          </p>
+          <div className="flex gap-3">
+            <button
+              className="flex-1 py-3 rounded-full border border-border text-sm font-medium text-foreground hover:bg-secondary transition-colors"
+              onClick={() => { setCurrentIndex(0); loadProfiles(); }}
+            >
+              Start Over
+            </button>
+            <button
+              className="flex-1 py-3 rounded-full bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity"
+              onClick={() => window.location.href = '/profile'}
+            >
+              Edit Profile
+            </button>
+          </div>
         </motion.div>
       </div>
     );
   }
 
-  // ─── MAIN DISCOVERY UI ─────────────────────────────────────────
+  // ─── MAIN DISCOVERY ────────────────────────────────────────
 
   return (
-    <div className="min-h-screen relative overflow-hidden pl-20">
-      <div className="fixed inset-0 -z-10 bg-background" />
+    <div className="fixed inset-0 pl-20 flex items-center justify-center bg-background overflow-hidden select-none">
+      {/* Mobile-width container */}
+      <div className="relative w-full max-w-[420px] h-full max-h-[860px] flex flex-col">
 
-      <div className="relative z-10 p-4 pb-8">
-        {/* Wallet Connection Banner */}
-        {!publicKey && (
-          <motion.div
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="max-w-md mx-auto mb-6"
+      {/* ── Top Bar ──────────────────────────────────────── */}
+      <div className="relative z-30 flex items-center justify-between px-5 pt-4 pb-2">
+        <div className="flex items-center gap-2">
+          <span className="text-lg font-headline italic text-primary tracking-tight">Discover</span>
+          {profiles.length - currentIndex > 0 && (
+            <span className="text-[11px] tabular-nums text-muted-foreground bg-secondary px-2 py-0.5 rounded-full">
+              {profiles.length - currentIndex}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {!publicKey && (
+            <WalletMultiButton className="!py-1.5 !px-4 !text-xs !bg-primary hover:!bg-primary/90 !text-primary-foreground !border-0 !rounded-full !h-8" />
+          )}
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            className={`w-9 h-9 rounded-full flex items-center justify-center transition-colors ${
+              showFilters ? 'bg-primary text-primary-foreground' : 'bg-secondary text-muted-foreground hover:text-foreground'
+            }`}
           >
-            <Card className="overflow-hidden border border-primary/20 shadow-lg backdrop-blur-sm bg-card/50">
-              <div className="p-4 bg-primary/5">
-                <div className="flex items-center justify-between gap-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center">
-                      <Sparkles className="w-5 h-5 text-primary-foreground" />
-                    </div>
-                    <p className="text-sm font-medium text-foreground">
-                      Connect to start matching
-                    </p>
-                  </div>
-                  <WalletMultiButton className="!py-2 !px-4 !text-sm !bg-primary hover:!bg-primary/90 !text-primary-foreground !border-0" />
-                </div>
-              </div>
-            </Card>
+            <SlidersHorizontal className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+
+      {/* ── Filters (collapsible) ────────────────────────── */}
+      <AnimatePresence>
+        {showFilters && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="relative z-30 px-5 overflow-hidden"
+          >
+            <DiscoveryFilters
+              filters={filters}
+              onFiltersChange={setFilters}
+              onClose={() => setShowFilters(false)}
+            />
           </motion.div>
         )}
-        
-        {/* Stats Header */}
-        <motion.div
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="max-w-md mx-auto mb-6"
-        >
-          <div className="flex items-center justify-between backdrop-blur-md bg-card/50 rounded-2xl p-4 shadow-lg border border-primary/20">
-            <div className="flex items-center gap-2">
-              <Heart className="w-5 h-5 text-primary" />
-              <span className="text-sm font-semibold text-foreground">
-                {dailySwipesUsed} <span className="text-muted-foreground">/ {swipeLimit === -1 ? '∞' : swipeLimit}</span>
-              </span>
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                <span className="text-sm font-medium text-muted-foreground">
-                  {profiles.length - currentIndex} nearby
-                </span>
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setShowFilters(!showFilters)}
-                className={`rounded-xl h-8 w-8 p-0 ${showFilters ? 'bg-primary text-primary-foreground' : ''}`}
-              >
-                <SlidersHorizontal className="w-4 h-4" />
-              </Button>
-            </div>
-          </div>
-        </motion.div>
+      </AnimatePresence>
 
-        {/* Filters Panel */}
-        <AnimatePresence>
-          {showFilters && (
+      {/* ── Card Area ────────────────────────────────────── */}
+      <div className="flex-1 relative px-3 pt-2 pb-2 min-h-0">
+        <AnimatePresence mode="wait">
+          {currentProfile && (
             <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
-              exit={{ opacity: 0, height: 0 }}
-              className="max-w-md mx-auto mb-6 overflow-hidden"
+              key={currentProfile.walletAddress}
+              className="absolute inset-0 mx-1 mt-0 mb-2"
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{
+                x: exitDirection === 'left' ? -400 : 400,
+                rotate: exitDirection === 'left' ? -18 : 18,
+                opacity: 0,
+                transition: { duration: 0.35, ease: [0.32, 0, 0.67, 0] },
+              }}
+              drag="x"
+              dragConstraints={{ left: 0, right: 0 }}
+              dragElastic={0.9}
+              style={{ touchAction: 'none' }}
+              onDrag={(_e, info) => {
+                if (info.offset.x > 50) setSwipeIndicator('like');
+                else if (info.offset.x < -50) setSwipeIndicator('nope');
+                else setSwipeIndicator(null);
+              }}
+              onDragEnd={(_e, info) => {
+                setSwipeIndicator(null);
+                handleDragEnd(_e, info);
+              }}
+              transition={{ type: 'spring', stiffness: 260, damping: 26 }}
             >
-              <DiscoveryFilters
-                filters={filters}
-                onFiltersChange={setFilters}
-                onClose={() => setShowFilters(false)}
-              />
+              {/* Card Container */}
+              <div className="relative w-full h-full rounded-3xl overflow-hidden shadow-xl">
+
+                {/* Full-bleed image */}
+                <Image
+                  src={getDisplayImageUrl(currentProfile.imageCid, currentProfile.name)}
+                  alt={currentProfile.name}
+                  fill
+                  className="object-cover pointer-events-none select-none"
+                  draggable={false}
+                  priority
+                />
+
+                {/* Swipe indicator stamps */}
+                <AnimatePresence>
+                  {swipeIndicator === 'like' && (
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.5, rotate: -15 }}
+                      animate={{ opacity: 1, scale: 1, rotate: -15 }}
+                      exit={{ opacity: 0, scale: 0.5 }}
+                      className="absolute top-8 left-6 z-30 border-[3px] border-green-400 rounded-lg px-4 py-1"
+                    >
+                      <span className="text-green-400 text-3xl font-black tracking-wider">LIKE</span>
+                    </motion.div>
+                  )}
+                  {swipeIndicator === 'nope' && (
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.5, rotate: 15 }}
+                      animate={{ opacity: 1, scale: 1, rotate: 15 }}
+                      exit={{ opacity: 0, scale: 0.5 }}
+                      className="absolute top-8 right-6 z-30 border-[3px] border-red-400 rounded-lg px-4 py-1"
+                    >
+                      <span className="text-red-400 text-3xl font-black tracking-wider">NOPE</span>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                {/* Compatibility Badge */}
+                {currentProfile.compatibilityScore !== undefined && currentProfile.compatibilityScore > 0 && (
+                  <div className="absolute top-5 left-5 z-20">
+                    <div className="backdrop-blur-xl bg-black/40 rounded-full px-3 py-1.5 flex items-center gap-1.5">
+                      <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+                      <span className="text-white text-xs font-semibold">{currentProfile.compatibilityScore}% match</span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Bottom gradient overlay */}
+                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent pointer-events-none select-none z-10" />
+
+                {/* ── Profile Info Overlay ──────────────────── */}
+                <div className="absolute bottom-0 left-0 right-0 z-20 px-5">
+
+                  {/* Name + Age Row */}
+                  <div className="flex items-end justify-between mb-1">
+                    <div>
+                      <h2 className="text-white text-[28px] font-semibold leading-tight tracking-tight drop-shadow-md">
+                        {currentProfile.name}
+                      </h2>
+                      <p className="text-white/70 text-sm mt-0.5">{formatIntent(currentProfile.datingIntent)}</p>
+                    </div>
+                    <button
+                      onClick={() => setShowInfo(!showInfo)}
+                      className="w-8 h-8 rounded-full bg-white/15 backdrop-blur-sm flex items-center justify-center hover:bg-white/25 transition-colors mb-1"
+                    >
+                      {showInfo ? (
+                        <ChevronDown className="w-4 h-4 text-white" />
+                      ) : (
+                        <ChevronUp className="w-4 h-4 text-white" />
+                      )}
+                    </button>
+                  </div>
+
+                  {/* Interests pills */}
+                  {currentProfile.interests.length > 0 && !showInfo && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="flex flex-wrap gap-1.5 mb-4"
+                    >
+                      {currentProfile.interests.slice(0, 4).map((interest) => (
+                        <span
+                          key={interest}
+                          className="text-[11px] font-medium text-white bg-white/15 backdrop-blur-sm rounded-full px-3 py-1"
+                        >
+                          {interest}
+                        </span>
+                      ))}
+                    </motion.div>
+                  )}
+
+                  {/* Expanded bio panel */}
+                  <AnimatePresence>
+                    {showInfo && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="overflow-hidden mb-4"
+                      >
+                        <div className="backdrop-blur-xl bg-white/10 rounded-2xl p-4 mt-2 border border-white/10">
+                          <p className="text-white/60 text-[10px] uppercase tracking-widest font-semibold mb-1.5">
+                            {currentProfile.bioPrompt}
+                          </p>
+                          <p className="text-white text-sm leading-relaxed">
+                            {currentProfile.bio}
+                          </p>
+                          {currentProfile.interests.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5 mt-3 pt-3 border-t border-white/10">
+                              {currentProfile.interests.map((interest) => (
+                                <span
+                                  key={interest}
+                                  className="text-[11px] font-medium text-white bg-white/15 rounded-full px-3 py-1"
+                                >
+                                  {interest}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
 
-        {/* Profile Card Stack */}
-        <div className="max-w-md mx-auto h-[580px] relative perspective-1000">
-          <AnimatePresence mode="wait">
-            {currentProfile && (
-              <motion.div
-                key={currentProfile.walletAddress}
-                className="absolute inset-0"
-                initial={{ scale: 0.9, opacity: 0, rotateY: -10 }}
-                animate={{ scale: 1, opacity: 1, rotateY: 0 }}
-                exit={{
-                  scale: 0.8,
-                  opacity: 0,
-                  x: exitDirection === 'left' ? -200 : 200,
-                  rotate: exitDirection === 'left' ? -10 : 10,
-                  transition: { duration: 0.3 }
-                }}
-                drag="x"
-                dragConstraints={{ left: 0, right: 0 }}
-                dragElastic={0.7}
-                onDragEnd={handleDragEnd}
-                whileDrag={{ scale: 1.02, cursor: 'grabbing' }}
-                transition={{ type: "spring", stiffness: 300, damping: 30 }}
-              >
-                <Card className="h-full overflow-hidden shadow-2xl border border-primary/20 bg-card/95 backdrop-blur-sm">
-                  {/* Photo Gallery */}
-                  <div className="relative h-[65%] overflow-hidden">
-                    <PhotoGallery 
-                      photos={currentProfile.imageCid ? [getDisplayImageUrl(currentProfile.imageCid, currentProfile.name)] : []} 
-                      userName={currentProfile.name} 
-                    />
-
-                    {/* Gradient for text readability */}
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent pointer-events-none z-10" />
-
-                    {/* Top Badges */}
-                    <div className="absolute top-4 left-4 right-4 flex items-start justify-between z-20">
-                      {currentProfile.compatibilityScore !== undefined && currentProfile.compatibilityScore > 0 && (
-                        <motion.div
-                          initial={{ scale: 0 }}
-                          animate={{ scale: 1 }}
-                          transition={{ delay: 0.2, type: "spring" }}
-                        >
-                          <Badge className="bg-primary text-primary-foreground border-0 shadow-lg px-3 py-1">
-                            <Sparkles className="w-3 h-3 mr-1" />
-                            {currentProfile.compatibilityScore}% Match
-                          </Badge>
-                        </motion.div>
-                      )}
-                      {currentProfile.distance > 0 && (
-                        <Badge className="backdrop-blur-md bg-white/90 text-gray-900 border-0 shadow-lg px-3 py-1">
-                          <MapPin className="w-3 h-3 mr-1" />
-                          {currentProfile.distance}km
-                        </Badge>
-                      )}
-                    </div>
-
-                    {/* Bottom Info */}
-                    <div className="absolute bottom-0 left-0 right-0 p-6 text-white z-20">
-                      <motion.h2
-                        initial={{ y: 20, opacity: 0 }}
-                        animate={{ y: 0, opacity: 1 }}
-                        transition={{ delay: 0.1 }}
-                        className="text-4xl font-headline italic mb-2 drop-shadow-lg"
-                      >
-                        {currentProfile.name}
-                      </motion.h2>
-                      <motion.div
-                        initial={{ y: 20, opacity: 0 }}
-                        animate={{ y: 0, opacity: 1 }}
-                        transition={{ delay: 0.2 }}
-                      >
-                        <Badge className="bg-white/20 backdrop-blur-md text-white border-white/30 shadow-lg">
-                          {currentProfile.datingIntent}
-                        </Badge>
-                      </motion.div>
-                    </div>
-                  </div>
-
-                  {/* Profile Details */}
-                  <div className="p-6 h-[35%] overflow-y-auto bg-card">
-                    <motion.div
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      transition={{ delay: 0.3 }}
-                      className="mb-4"
-                    >
-                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">
-                        {currentProfile.bioPrompt}
-                      </p>
-                      <p className="text-foreground leading-relaxed font-body">
-                        {currentProfile.bio}
-                      </p>
-                    </motion.div>
-
-                    {currentProfile.interests.length > 0 && (
-                      <motion.div
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        transition={{ delay: 0.4 }}
-                      >
-                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-                          Interests
-                        </p>
-                        <div className="flex flex-wrap gap-2">
-                          {currentProfile.interests.map((interest, i) => (
-                            <motion.div
-                              key={interest}
-                              initial={{ scale: 0 }}
-                              animate={{ scale: 1 }}
-                              transition={{ delay: 0.5 + i * 0.05, type: "spring" }}
-                            >
-                              <Badge
-                                variant="outline"
-                                className="bg-secondary border-primary/20 text-foreground px-3 py-1"
-                              >
-                                {interest}
-                              </Badge>
-                            </motion.div>
-                          ))}
-                        </div>
-                      </motion.div>
-                    )}
-                  </div>
-                </Card>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {/* Stack preview cards */}
-          {profiles[currentIndex + 1] && (
-            <motion.div
-              className="absolute inset-0 -z-10"
-              style={{ transform: 'scale(0.95) translateY(10px)' }}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 0.3 }}
-            >
-              <Card className="h-full bg-card border border-primary/10" />
-            </motion.div>
-          )}
-          {profiles[currentIndex + 2] && (
-            <motion.div
-              className="absolute inset-0 -z-20"
-              style={{ transform: 'scale(0.9) translateY(20px)' }}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 0.15 }}
-            >
-              <Card className="h-full bg-card border border-primary/5" />
-            </motion.div>
-          )}
-        </div>
-
-        {/* Action Buttons */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-          className="max-w-md mx-auto mt-8 flex items-center justify-center gap-4"
-        >
-          <UndoButton 
-            onUndo={handleUndo}
-            disabled={swipeHistory.length === 0}
-            isPremium={isPremium}
-            onUpgradeClick={() => window.location.href = '/subscription'}
-          />
-          
-          <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.95 }}>
-            <Button
-              size="lg"
-              variant="outline"
-              className="rounded-full w-16 h-16 border-2 border-primary/20 shadow-2xl bg-card/80 backdrop-blur-sm hover:bg-card group transition-all duration-200"
-              onClick={() => handleSwipe('left')}
-              disabled={!publicKey || !canSwipe}
-              title={!publicKey ? 'Connect wallet to swipe' : 'Pass'}
-            >
-              <X className="w-8 h-8 text-destructive group-hover:scale-110 transition-transform" />
-            </Button>
-          </motion.div>
-
-          <SuperLikeButton
-            onSuperLike={handleSuperLike}
-            disabled={!publicKey || !canSwipe}
-            dailyLimitReached={superLikesUsed >= (isPremium ? 999 : 1)}
-          />
-
-          <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.95 }}>
-            <Button
-              size="lg"
-              className="rounded-full w-16 h-16 border-0 shadow-2xl bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 transition-all duration-300 group"
-              onClick={() => handleSwipe('right')}
-              disabled={!publicKey || !canSwipe}
-              title={!publicKey ? 'Connect wallet to swipe' : 'Like'}
-            >
-              <Heart className="w-8 h-8 text-white fill-current group-hover:scale-110 transition-transform" />
-            </Button>
-          </motion.div>
-
-          <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
-            <Button
-              size="lg"
-              variant="ghost"
-              className="rounded-full w-12 h-12 border border-primary/10 shadow-lg bg-card/50 backdrop-blur-sm hover:bg-card transition-all duration-200"
-              onClick={() => setShowReport(true)}
-              disabled={!publicKey || !currentProfile}
-              title="Report Profile"
-            >
-              <Flag className="w-5 h-5 text-muted-foreground" />
-            </Button>
-          </motion.div>
-        </motion.div>
-
-        {/* Privacy Notice */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.5 }}
-          className="max-w-md mx-auto mt-8"
-        >
-          <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground backdrop-blur-sm bg-card/40 rounded-full px-4 py-2 mx-auto w-fit border border-primary/10">
-            <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
-            <span>End-to-end encrypted • Zero-knowledge matching</span>
+        {/* Stack peek cards */}
+        {profiles[currentIndex + 1] && (
+          <div className="absolute inset-0 mx-1 mt-0 mb-2 -z-10" style={{ transform: 'scale(0.96) translateY(8px)' }}>
+            <div className="w-full h-full rounded-3xl bg-secondary/80 border border-border" />
           </div>
-        </motion.div>
+        )}
       </div>
 
-      {/* Match Modal */}
+      {/* ── Action Buttons ───────────────────────────────── */}
+      <div className="relative z-30 flex items-center justify-center gap-3.5 px-5 pb-5 pt-3">
+        {/* Undo */}
+        <motion.button
+          whileTap={{ scale: 0.85 }}
+          onClick={handleUndo}
+          disabled={swipeHistory.length === 0}
+          className="w-14 h-14 rounded-full bg-white dark:bg-gray-800 shadow-lg flex items-center justify-center hover:bg-gray-50 dark:hover:bg-gray-700 transition-all disabled:opacity-30 disabled:pointer-events-none"
+        >
+          <RotateCcw className="w-5 h-5 text-gray-900 dark:text-white" strokeWidth={2.5} />
+        </motion.button>
+
+        {/* Nope */}
+        <motion.button
+          whileTap={{ scale: 0.85 }}
+          onClick={() => handleSwipe('left')}
+          disabled={!publicKey || !canSwipe}
+          className="w-14 h-14 rounded-full bg-white dark:bg-gray-800 shadow-lg flex items-center justify-center hover:bg-gray-50 dark:hover:bg-gray-700 transition-all disabled:opacity-30 disabled:pointer-events-none"
+        >
+          <X className="w-5 h-5 text-gray-900 dark:text-white" strokeWidth={2.5} />
+        </motion.button>
+
+        {/* Super Like */}
+        <motion.button
+          whileTap={{ scale: 0.85 }}
+          onClick={handleSuperLike}
+          disabled={!publicKey || !canSwipe || superLikesUsed >= (isPremium ? 999 : 1)}
+          className="w-14 h-14 rounded-full bg-white dark:bg-gray-800 shadow-lg flex items-center justify-center hover:bg-gray-50 dark:hover:bg-gray-700 transition-all disabled:opacity-30 disabled:pointer-events-none"
+        >
+          <Star className="w-5 h-5 text-gray-900 dark:text-white fill-gray-900 dark:fill-white" strokeWidth={2.5} />
+        </motion.button>
+
+        {/* Like */}
+        <motion.button
+          whileTap={{ scale: 0.85 }}
+          onClick={() => handleSwipe('right')}
+          disabled={!publicKey || !canSwipe}
+          className="w-14 h-14 rounded-full bg-white dark:bg-gray-800 shadow-lg flex items-center justify-center hover:bg-gray-50 dark:hover:bg-gray-700 transition-all disabled:opacity-30 disabled:pointer-events-none"
+        >
+          <Heart className="w-5 h-5 text-gray-900 dark:text-white fill-gray-900 dark:fill-white" strokeWidth={2.5} />
+        </motion.button>
+
+        {/* Report */}
+        <motion.button
+          whileTap={{ scale: 0.85 }}
+          onClick={() => setShowReport(true)}
+          disabled={!publicKey || !currentProfile}
+          className="w-14 h-14 rounded-full bg-white dark:bg-gray-800 shadow-lg flex items-center justify-center hover:bg-gray-50 dark:hover:bg-gray-700 transition-all disabled:opacity-30 disabled:pointer-events-none"
+        >
+          <Flag className="w-5 h-5 text-gray-900 dark:text-white" strokeWidth={2.5} />
+        </motion.button>
+      </div>
+
+      {/* ── Bottom Safety Badge ──────────────────────────── */}
+      <div className="relative z-30 flex justify-center pb-3">
+        <span className="text-[10px] text-muted-foreground/60 tracking-widest uppercase">
+          Zero-knowledge verified
+        </span>
+      </div>
+
+      </div>{/* end mobile container */}
+
+      {/* ── Modals ───────────────────────────────────────── */}
       <MatchModal
         isOpen={showMatchModal}
         onClose={() => setShowMatchModal(false)}
@@ -873,7 +781,6 @@ export default function DiscoveryPage() {
         userName={currentUserProfile?.name || 'You'}
       />
 
-      {/* Report Modal */}
       <ReportModal
         isOpen={showReport}
         onClose={() => setShowReport(false)}
