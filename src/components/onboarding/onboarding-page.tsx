@@ -33,33 +33,36 @@ export function OnboardingPage({ onComplete }: OnboardingPageProps) {
     const [error, setError] = useState<string>('');
     const [showWalletModal, setShowWalletModal] = useState(false);
 
-    // Handle wallet connection
+    // Handle wallet connection and check for existing profile
     useEffect(() => {
         async function checkProfile() {
-            if (connected && publicKey && currentStep === 1) {
+            if (connected && publicKey) {
                 setWalletAddress(publicKey);
-                setLoading(false);
                 
-                // Check if profile already exists
+                // Check if profile already exists (regardless of current step)
                 try {
                     const existingProfile = await getProfile(publicKey);
                     if (existingProfile) {
-                        // Profile exists, redirect to profile page
-                        router.push('/profile');
+                        // Profile exists, redirect to discovery immediately
+                        console.log('✅ Profile exists, redirecting to discovery');
+                        router.push('/discovery');
                         return;
                     }
                 } catch (err) {
                     console.error('Error checking profile:', err);
                 }
                 
-                // No profile, continue to step 2
-                setCurrentStep(2);
+                // No profile exists - continue with onboarding
+                if (currentStep === 1) {
+                    setLoading(false);
+                    setCurrentStep(2);
+                }
             }
         }
         
         checkProfile();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [connected, publicKey, currentStep]);
+    }, [connected, publicKey]);
 
     const handleConnectWallet = async () => {
         try {

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useWallet } from '@demox-labs/aleo-wallet-adapter-react';
+import { getProfile } from '@/lib/supabase/profile';
 import type { VerificationRecord } from '@/lib/aleo/types';
 
 interface BlissSession {
@@ -10,6 +11,7 @@ interface BlissSession {
   verificationRecord: VerificationRecord | null;
   isVerified: boolean;
   sessionId: string | null;
+  hasProfile: boolean;
 }
 
 const STORAGE_KEY = 'bliss-session';
@@ -26,6 +28,7 @@ export function useBlissSession() {
     verificationRecord: null,
     isVerified: false,
     sessionId: null,
+    hasProfile: false,
   });
 
   // Load session from localStorage on mount
@@ -48,19 +51,58 @@ export function useBlissSession() {
     }
   }, [connected, publicKey]);
 
-  // Update session when wallet connection changes
+  // Update session when wallet connection changes and check for existing profile
   useEffect(() => {
-    setSession(prev => ({
-      ...prev,
-      isConnected: connected,
-      address: publicKey || null,
-      // Clear verification if wallet disconnected
-      ...(connected ? {} : { 
-        verificationRecord: null, 
-        isVerified: false,
-        sessionId: null 
-      }),
-    }));
+    async function checkProfile() {
+      if (connected && publicKey) {
+        try {
+          const profile = await getProfile(publicKey);
+          
+          if (profile) {
+            // Profile exists - mark as verified
+            console.log('✅ Existing profile found, auto-verifying session');
+            setSession(prev => ({
+              ...prev,
+              isConnected: connected,
+              address: publicKey,
+              hasProfile: true,
+              isVerified: true,
+              sessionId: prev.sessionId || `bliss-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            }));
+          } else {
+            // No profile yet
+            console.log('❌ No profile found');
+            setSession(prev => ({
+              ...prev,
+              isConnected: connected,
+              address: publicKey,
+              hasProfile: false,
+            }));
+          }
+        } catch (err) {
+          console.error('Profile check failed:', err);
+          setSession(prev => ({
+            ...prev,
+            isConnected: connected,
+            address: publicKey,
+            hasProfile: false,
+          }));
+        }
+      } else {
+        // Wallet disconnected - clear session
+        setSession(prev => ({
+          ...prev,
+          isConnected: false,
+          address: null,
+          verificationRecord: null,
+          isVerified: false,
+          sessionId: null,
+          hasProfile: false,
+        }));
+      }
+    }
+    
+    checkProfile();
   }, [connected, publicKey]);
 
   // Save session to localStorage whenever it changes
@@ -112,6 +154,7 @@ export function useBlissSession() {
         verificationRecord: null,
         isVerified: false,
         sessionId: null,
+        hasProfile: false,
       });
       
       // Disconnect wallet if connected
@@ -152,6 +195,7 @@ export function useBlissSession() {
     verificationRecord: session.verificationRecord,
     isVerified: session.isVerified,
     sessionId: session.sessionId,
+    hasProfile: session.hasProfile,
 
     // Actions
     setVerificationRecord,

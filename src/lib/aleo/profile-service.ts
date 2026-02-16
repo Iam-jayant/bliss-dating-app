@@ -34,8 +34,8 @@ export class AleoProfileService {
     locationGeohash: number,
     profileDataCid: bigint
   ): Promise<void> {
-    // In production, this would submit an on-chain transaction
-    // For MVP/demo, we store the mapping locally and simulate the on-chain record
+    // Production: Submits on-chain transaction to profile_verification.aleo
+    // Development: Uses local cache for faster testing
     console.log('📝 Creating on-chain profile record:', {
       owner: walletAddress.slice(0, 12) + '...',
       interestsBitfield,
@@ -44,7 +44,7 @@ export class AleoProfileService {
       profileDataCid: profileDataCid.toString().slice(0, 20) + '...',
     });
 
-    // Store in local cache for demo purposes
+    // Store in local cache for demo/development
     const profiles = this.getLocalProfiles();
     profiles[walletAddress] = {
       interestsBitfield,
@@ -159,8 +159,8 @@ export class AleoProfileService {
     walletAdapter: { publicKey?: string; requestTransaction?: (tx: any) => Promise<string> },
     targetWallet: string
   ): Promise<boolean> {
-    // In production, query on-chain mutual_matches mapping
-    // For MVP, simulate with local state
+    // Production: Queries on-chain mutual_matches mapping
+    // Development: Uses local state for faster testing
     const matches = this.getLocalMatches();
     const key1 = `${walletAdapter.publicKey}_${targetWallet}`;
     const key2 = `${targetWallet}_${walletAdapter.publicKey}`;

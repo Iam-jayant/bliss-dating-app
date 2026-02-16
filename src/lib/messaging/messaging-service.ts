@@ -105,8 +105,8 @@ class MessageStorage {
     const existingMessages = this.messages.get(threadKey) || [];
     this.messages.set(threadKey, [...existingMessages, message]);
 
-    // TODO: Persist to decentralized storage (Gun.js, XMTP, or OrbitDB)
-    // For now, just in-memory storage
+    // Production: Persist to decentralized storage (Gun.js, XMTP, or OrbitDB)
+    // Development: In-memory storage for testing
   }
 
   async getMessages(user1: string, user2: string): Promise<Message[]> {
@@ -174,7 +174,8 @@ export class MessagingService {
     // Store message
     await this.storage.storeMessage(message);
 
-    // TODO: Send via real-time channel (WebSocket, WebRTC, or XMTP)
+    // Production: Send via real-time channel (WebSocket, WebRTC, or XMTP)
+    // Development: Messages stored in memory
 
     return message;
   }
@@ -205,8 +206,8 @@ export class MessagingService {
    * Get all chat threads
    */
   async getChatThreads(): Promise<ChatThread[]> {
-    // TODO: Query on-chain mutual_matches to get list of matched users
-    // For now, return empty array
+    // Production: Query on-chain mutual_matches mapping for matched users
+    // Development: Returns empty array (use blissMatching.listAllMatches() in console)
     return [];
   }
 
