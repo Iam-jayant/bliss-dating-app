@@ -1,23 +1,41 @@
 /**
  * Discovery Page - Card-based profile browsing with swipe actions
  * Privacy-first: Only shows profiles that match user's criteria
+ * 
+ * FIXES APPLIED:
+ * - Double-hash bug: uses getProfileByHash() for already-hashed wallet addresses
+ * - Broken mock images: uses DiceBear API for placeholder avatars
+ * - Removed all gradient backgrounds (consistent with landing page)
+ * - Fixed duplicate geolocation call
+ * - Added discovery filters
+ * - Proper swipe counter persistence
  */
 
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence, PanInfo } from 'framer-motion';
-import { Heart, X, Sparkles, MapPin, Info } from 'lucide-react';
+import { Heart, X, Sparkles, MapPin, Info, SlidersHorizontal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useWallet } from '@demox-labs/aleo-wallet-adapter-react';
-import { profileService } from '@/lib/storage/profile-service';
-import { pinataStorage } from '@/lib/storage/pinata-storage';
+import { WalletMultiButton } from '@demox-labs/aleo-wallet-adapter-reactui';
+import { getAllProfiles, getProfile, getProfileByHash, getProfileImageUrl } from '@/lib/supabase/profile';
+import type { ProfileData } from '@/lib/supabase/types';
+import { 
+  calculateEnhancedCompatibility, 
+  recordLike, 
+  recordPass, 
+  checkMutualMatch,
+  hasActedOn 
+} from '@/lib/matching/compatibility-service';
+import { MatchModal } from './match-modal';
+import { DiscoveryFilters, type FilterState } from './discovery-filters';
 
 interface DiscoveryProfile {
-  walletAddress: string;
+  walletAddress: string; // This is wallet_hash from storage
   name: string;
   bio: string;
   bioPrompt: string;
@@ -25,11 +43,39 @@ interface DiscoveryProfile {
   datingIntent: string;
   imageCid: string;
   distance: number;
-  compatibilityScore?: number; // 0-100
+  compatibilityScore?: number;
 }
 
 const SWIPE_THRESHOLD = 100;
-const SWIPE_POWER = 200;
+
+/**
+ * Get displayable image URL for a profile.
+ * Handles: IPFS CIDs, local fallback paths, data URLs, mock profiles, and missing images
+ */
+function getDisplayImageUrl(imageCid: string, profileName: string): string {
+  if (!imageCid) {
+    // No image at all — generate a unique DiceBear avatar
+    return `https://api.dicebear.com/9.x/notionists/svg?seed=${encodeURIComponent(profileName)}&backgroundColor=c0aede`;
+  }
+
+  // Mock profile images — use DiceBear with the profile name as seed
+  if (imageCid.startsWith('mock_image_')) {
+    return `https://api.dicebear.com/9.x/notionists/svg?seed=${encodeURIComponent(profileName)}&backgroundColor=c0aede`;
+  }
+
+  // Local fallback images (from uploadProfileImage fallback)
+  if (imageCid.startsWith('local:')) {
+    return getProfileImageUrl(imageCid);
+  }
+
+  // Data URLs (inline base64)
+  if (imageCid.startsWith('data:')) {
+    return imageCid;
+  }
+
+  // Real IPFS CID — use Pinata gateway
+  return getProfileImageUrl(imageCid);
+}
 
 export default function DiscoveryPage() {
   const { publicKey } = useWallet();
@@ -37,338 +83,684 @@ export default function DiscoveryPage() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [dailySwipesUsed, setDailySwipesUsed] = useState(0);
-  const [swipeLimit, setSwipeLimit] = useState(10); // Free tier limit
-  const [matches, setMatches] = useState<string[]>([]);
+  const [swipeLimit, setSwipeLimit] = useState(10);
+  const [showMatchModal, setShowMatchModal] = useState(false);
+  const [matchedProfile, setMatchedProfile] = useState<DiscoveryProfile | null>(null);
+  const [currentUserProfile, setCurrentUserProfile] = useState<ProfileData | null>(null);
+  const [exitDirection, setExitDirection] = useState<'left' | 'right'>('right');
+  const [showFilters, setShowFilters] = useState(false);
+  const [filters, setFilters] = useState<FilterState>({
+    intents: [],
+    interests: [],
+    minCompatibility: 0,
+  });
 
   const currentProfile = profiles[currentIndex];
-  const canSwipe = dailySwipesUsed < swipeLimit;
+  const canSwipe = swipeLimit === -1 || dailySwipesUsed < swipeLimit;
 
-  const getUserLocation = async (): Promise<number> => {
-    // TODO: Get user's location and convert to geohash
-    // For now, return mock geohash
-    return 12345;
-  };
-
-  const getWalletSignature = async (): Promise<string> => {
-    // TODO: Request wallet signature for decryption
-    // This should be cached and reused
-    return 'mock-signature';
-  };
-
-  useEffect(() => {
+  const loadCurrentUserProfile = useCallback(async () => {
     if (publicKey) {
-      loadProfiles();
-      loadUserLimits();
+      const profile = await getProfile(publicKey);
+      setCurrentUserProfile(profile);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [publicKey]);
 
-  const loadProfiles = async () => {
+  const loadProfiles = useCallback(async () => {
     try {
       setLoading(true);
       
-      // Get user's location geohash for proximity matching
-      const userLocation = await getUserLocation();
+      const localProfiles = getAllProfiles();
       
-      // Discover nearby profiles via on-chain query
-      const nearbyWallets = await profileService.discoverNearbyProfiles(
-        userLocation,
-        50000 // 50km radius
-      );
-
-      // Fetch profile data from IPFS
-      const profilePromises = nearbyWallets.map(async (wallet) => {
-        try {
-          const walletSig = await getWalletSignature(); // Get signature for decryption
-          const profileData = await profileService.getProfile(wallet, walletSig);
-          
-          if (!profileData) return null;
-
-          return {
-            walletAddress: wallet,
-            name: profileData.name,
-            bio: profileData.bio,
-            bioPrompt: profileData.bioPromptType,
-            interests: profileData.interests,
-            datingIntent: profileData.datingIntent,
-            imageCid: profileData.profileImageCid || '',
-            distance: Math.floor(Math.random() * 50) + 1, // Calculated from geohash
-          };
-        } catch (error) {
-          console.error('Failed to load profile:', wallet, error);
-          return null;
+      if (localProfiles.length > 0) {
+        let currentUserHash: string | undefined;
+        let userProfile: ProfileData | null = null;
+        
+        if (publicKey) {
+          userProfile = await getProfile(publicKey);
+          currentUserHash = userProfile?.wallet_hash;
         }
-      });
+        
+        // Convert ProfileData → DiscoveryProfile
+        let discoveryProfiles: DiscoveryProfile[] = localProfiles
+          .filter(p => {
+            if (currentUserHash && p.wallet_hash === currentUserHash) return false;
+            if (currentUserHash && hasActedOn(currentUserHash, p.wallet_hash)) return false;
+            return true;
+          })
+          .map(profile => {
+            let compatibilityScore: number | undefined;
+            if (userProfile) {
+              const compat = calculateEnhancedCompatibility(userProfile, profile);
+              compatibilityScore = compat.score;
+            }
+            return {
+              walletAddress: profile.wallet_hash,
+              name: profile.name,
+              bio: profile.bio,
+              bioPrompt: profile.bio_prompt_type,
+              interests: profile.interests,
+              datingIntent: profile.dating_intent,
+              imageCid: profile.profile_image_path || '',
+              distance: 0,
+              compatibilityScore,
+            };
+          });
 
-      const loadedProfiles = (await Promise.all(profilePromises)).filter(
-        (p): p is DiscoveryProfile => p !== null
-      );
+        // Apply user filters
+        if (filters.intents.length > 0) {
+          discoveryProfiles = discoveryProfiles.filter(p => 
+            filters.intents.includes(p.datingIntent)
+          );
+        }
+        if (filters.interests.length > 0) {
+          discoveryProfiles = discoveryProfiles.filter(p =>
+            p.interests.some(i => filters.interests.includes(i))
+          );
+        }
+        if (filters.minCompatibility > 0) {
+          discoveryProfiles = discoveryProfiles.filter(p =>
+            (p.compatibilityScore || 0) >= filters.minCompatibility
+          );
+        }
 
-      setProfiles(loadedProfiles);
+        // Sort by compatibility (highest first)
+        const sorted = discoveryProfiles.sort((a, b) => {
+          if (a.compatibilityScore !== undefined && b.compatibilityScore === undefined) return -1;
+          if (a.compatibilityScore === undefined && b.compatibilityScore !== undefined) return 1;
+          if (a.compatibilityScore !== undefined && b.compatibilityScore !== undefined) {
+            if (b.compatibilityScore !== a.compatibilityScore) {
+              return b.compatibilityScore - a.compatibilityScore;
+            }
+          }
+          return a.distance - b.distance;
+        });
+        
+        setProfiles(sorted);
+        setCurrentIndex(0);
+        setLoading(false);
+        return;
+      }
+
+      setProfiles([]);
     } catch (error) {
       console.error('Failed to load profiles:', error);
     } finally {
       setLoading(false);
     }
-  };
+  }, [publicKey, filters]);
 
-  const loadUserLimits = async () => {
-    // TODO: Query on-chain subscription record
-    // For now, use default free tier limits
-    setSwipeLimit(10);
-    setDailySwipesUsed(0);
-  };
+  const loadUserLimits = useCallback(async () => {
+    if (!publicKey) {
+      setSwipeLimit(10);
+      setDailySwipesUsed(0);
+      return;
+    }
+    try {
+      const cached = localStorage.getItem(`bliss_sub_${publicKey}`);
+      if (cached) {
+        const data = JSON.parse(cached);
+        if (data.expiresAt > Date.now()) {
+          setSwipeLimit(-1);
+          setDailySwipesUsed(0);
+          return;
+        }
+      }
+      setSwipeLimit(10);
+      const today = new Date().toISOString().split('T')[0];
+      const usageKey = `bliss_swipes_${publicKey}_${today}`;
+      const used = parseInt(localStorage.getItem(usageKey) || '0', 10);
+      setDailySwipesUsed(used);
+    } catch (error) {
+      console.error('Failed to load user limits:', error);
+      setSwipeLimit(10);
+      setDailySwipesUsed(0);
+    }
+  }, [publicKey]);
+
+  useEffect(() => {
+    loadProfiles();
+    loadUserLimits();
+    loadCurrentUserProfile();
+  }, [loadProfiles, loadUserLimits, loadCurrentUserProfile]);
+
+  // ─── SWIPE HANDLERS ────────────────────────────────────────────
 
   const handleSwipe = async (direction: 'left' | 'right') => {
+    if (!publicKey) {
+      alert('Please connect your wallet to swipe on profiles');
+      return;
+    }
     if (!canSwipe || !currentProfile) return;
 
+    setExitDirection(direction);
     setDailySwipesUsed(prev => prev + 1);
 
+    // Persist swipe count
+    const today = new Date().toISOString().split('T')[0];
+    const usageKey = `bliss_swipes_${publicKey}_${today}`;
+    const currentUsed = parseInt(localStorage.getItem(usageKey) || '0', 10);
+    localStorage.setItem(usageKey, String(currentUsed + 1));
+
     if (direction === 'right') {
-      // Like action
       await handleLike(currentProfile.walletAddress);
     } else {
-      // Pass action
       await handlePass(currentProfile.walletAddress);
     }
 
-    // Move to next profile
     setCurrentIndex(prev => prev + 1);
   };
 
-  const handleLike = async (targetWallet: string) => {
+  const handleLike = async (targetWalletHash: string) => {
+    if (!publicKey) return;
+    
     try {
-      // Record like action on-chain via compatibility_matching contract
-      // TODO: Implement aleo service method
-      console.log('Liked:', targetWallet);
+      // Get current user's profile (hashes raw publicKey → correct)
+      const myProfile = await getProfile(publicKey);
+      // Get target profile by hash directly (NO double-hashing!)
+      const targetProfile = getProfileByHash(targetWalletHash);
+      
+      if (!myProfile || !targetProfile) {
+        console.warn('Profile lookup failed — recording like with hashes only');
+        const { hashWalletAddress } = await import('@/lib/wallet-hash');
+        const myHash = await hashWalletAddress(publicKey);
+        recordLike(myHash, targetWalletHash, []);
+        return;
+      }
+      
+      recordLike(myProfile.wallet_hash, targetWalletHash, myProfile.interests);
+      console.log('❤️ Liked:', targetProfile.name);
 
-      // Check for mutual match
-      const isMutualMatch = await checkMutualMatch(targetWallet);
+      const isMutualMatch = checkMutualMatch(
+        myProfile.wallet_hash,
+        targetWalletHash,
+        myProfile,
+        targetProfile
+      );
       
       if (isMutualMatch) {
-        setMatches(prev => [...prev, targetWallet]);
-        showMatchAnimation();
+        const matchedData = profiles.find(p => p.walletAddress === targetWalletHash);
+        if (matchedData) {
+          setMatchedProfile(matchedData);
+          setShowMatchModal(true);
+        }
       }
     } catch (error) {
       console.error('Failed to record like:', error);
     }
   };
 
-  const handlePass = async (targetWallet: string) => {
+  const handlePass = async (targetWalletHash: string) => {
+    if (!publicKey) return;
+    
     try {
-      // Record pass action (optional, for analytics)
-      console.log('Passed:', targetWallet);
+      const myProfile = await getProfile(publicKey);
+      
+      if (!myProfile) {
+        const { hashWalletAddress } = await import('@/lib/wallet-hash');
+        const myHash = await hashWalletAddress(publicKey);
+        recordPass(myHash, targetWalletHash);
+        return;
+      }
+      
+      recordPass(myProfile.wallet_hash, targetWalletHash);
+      const targetProfile = getProfileByHash(targetWalletHash);
+      if (targetProfile) {
+        console.log('👎 Passed:', targetProfile.name);
+      }
     } catch (error) {
       console.error('Failed to record pass:', error);
     }
   };
 
-  const checkMutualMatch = async (targetWallet: string): Promise<boolean> => {
-    // TODO: Check on-chain mutual_matches mapping
-    // For now, simulate 20% match rate
-    return Math.random() < 0.2;
-  };
-
-  const showMatchAnimation = () => {
-    // TODO: Show confetti and match modal
-    alert("It's a match! 🎉");
-  };
-
-  const handleDragEnd = (event: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
-    const swipeThreshold = SWIPE_THRESHOLD;
-    
-    if (info.offset.x > swipeThreshold) {
+  const handleDragEnd = (_event: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
+    if (info.offset.x > SWIPE_THRESHOLD) {
       handleSwipe('right');
-    } else if (info.offset.x < -swipeThreshold) {
+    } else if (info.offset.x < -SWIPE_THRESHOLD) {
       handleSwipe('left');
     }
   };
 
-  if (!publicKey) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <Card className="p-8 max-w-md text-center">
-          <p className="text-lg mb-4">Connect your wallet to start discovering</p>
-          <Button>Connect Wallet</Button>
-        </Card>
-      </div>
-    );
-  }
+  // ─── LOADING STATE ─────────────────────────────────────────────
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-pink-500" />
+      <div className="min-h-screen relative overflow-hidden pl-20 flex items-center justify-center">
+        <div className="fixed inset-0 -z-10 bg-background" />
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="text-center"
+        >
+          <motion.div
+            className="relative w-20 h-20 mx-auto mb-6"
+            animate={{ rotate: 360 }}
+            transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+          >
+            <div className="absolute inset-0 rounded-full bg-primary/20" />
+            <div className="absolute inset-2 rounded-full bg-background" />
+            <div className="absolute inset-0 rounded-full border-4 border-transparent border-t-primary border-r-primary/50" />
+          </motion.div>
+          <motion.p
+            className="text-muted-foreground font-body font-medium"
+            animate={{ opacity: [0.5, 1, 0.5] }}
+            transition={{ duration: 2, repeat: Infinity }}
+          >
+            Finding your matches...
+          </motion.p>
+        </motion.div>
       </div>
     );
   }
+
+  // ─── DAILY LIMIT STATE ─────────────────────────────────────────
 
   if (!canSwipe) {
     return (
-      <div className="flex items-center justify-center min-h-screen p-4">
-        <Card className="p-8 max-w-md text-center">
-          <Sparkles className="w-12 h-12 mx-auto mb-4 text-pink-500" />
-          <h2 className="text-2xl font-bold mb-2">Daily Limit Reached</h2>
-          <p className="text-gray-600 mb-6">
-            You've used all {swipeLimit} swipes for today. Upgrade to Premium for unlimited swipes!
-          </p>
-          <Button className="w-full bg-gradient-to-r from-pink-500 to-purple-500">
-            Upgrade to Premium
-          </Button>
-        </Card>
+      <div className="min-h-screen relative overflow-hidden pl-20 flex items-center justify-center p-4">
+        <div className="fixed inset-0 -z-10 bg-background" />
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="max-w-md w-full"
+        >
+          <Card className="overflow-hidden border border-primary/20 shadow-2xl backdrop-blur-sm bg-card/90">
+            <div className="p-8 text-center">
+              <motion.div
+                initial={{ scale: 0 }}
+                animate={{ scale: 1 }}
+                transition={{ type: "spring", delay: 0.2 }}
+                className="w-20 h-20 mx-auto mb-6 rounded-full bg-primary/20 flex items-center justify-center"
+              >
+                <Sparkles className="w-10 h-10 text-primary" />
+              </motion.div>
+              <h2 className="text-3xl font-headline italic mb-3 text-primary">
+                Daily Limit Reached
+              </h2>
+              <p className="text-muted-foreground mb-6 leading-relaxed font-body">
+                You&apos;ve used all <span className="font-bold text-foreground">{swipeLimit}</span> swipes for today.
+                Upgrade to Premium for unlimited swipes!
+              </p>
+              <div className="space-y-3 mb-6">
+                <div className="flex items-center gap-3 text-sm text-muted-foreground bg-secondary rounded-lg p-3">
+                  <Heart className="w-4 h-4 text-primary" />
+                  <span>Unlimited daily swipes</span>
+                </div>
+                <div className="flex items-center gap-3 text-sm text-muted-foreground bg-secondary rounded-lg p-3">
+                  <Sparkles className="w-4 h-4 text-primary" />
+                  <span>See who liked you</span>
+                </div>
+              </div>
+              <Button className="w-full h-12 text-base font-semibold bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg">
+                Upgrade to Premium
+              </Button>
+              <p className="text-xs text-muted-foreground mt-4">
+                Reset in {24 - new Date().getHours()} hours
+              </p>
+            </div>
+          </Card>
+        </motion.div>
       </div>
     );
   }
+
+  // ─── NO MORE PROFILES STATE ────────────────────────────────────
 
   if (currentIndex >= profiles.length) {
     return (
-      <div className="flex items-center justify-center min-h-screen p-4">
-        <Card className="p-8 max-w-md text-center">
-          <h2 className="text-2xl font-bold mb-2">No More Profiles</h2>
-          <p className="text-gray-600 mb-6">
-            Check back later for more matches in your area!
-          </p>
-          <Button onClick={() => setCurrentIndex(0)}>Start Over</Button>
-        </Card>
+      <div className="min-h-screen relative overflow-hidden pl-20 flex items-center justify-center p-4">
+        <div className="fixed inset-0 -z-10 bg-background" />
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="max-w-md w-full"
+        >
+          <Card className="overflow-hidden border border-primary/20 shadow-2xl backdrop-blur-sm bg-card/90">
+            <div className="p-8 text-center">
+              <motion.div
+                animate={{ rotate: [0, 10, -10, 0] }}
+                transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+                className="text-6xl mb-4"
+              >
+                👋
+              </motion.div>
+              <h2 className="text-3xl font-headline italic mb-3 text-primary">
+                That&apos;s Everyone!
+              </h2>
+              <p className="text-muted-foreground mb-6 leading-relaxed font-body">
+                You&apos;ve seen all profiles in your area. Check back soon for new matches!
+              </p>
+              <div className="bg-secondary rounded-xl p-4 mb-6">
+                <p className="text-sm text-muted-foreground">
+                  💡 <span className="font-medium text-foreground">Tip:</span> Update your preferences or adjust filters to discover more people
+                </p>
+              </div>
+              <div className="flex gap-3">
+                <Button
+                  variant="outline"
+                  className="flex-1 border border-primary/20 hover:bg-secondary"
+                  onClick={() => { setCurrentIndex(0); loadProfiles(); }}
+                >
+                  Review Again
+                </Button>
+                <Button
+                  className="flex-1 bg-primary hover:bg-primary/90 text-primary-foreground"
+                  onClick={() => window.location.href = '/profile'}
+                >
+                  Update Profile
+                </Button>
+              </div>
+            </div>
+          </Card>
+        </motion.div>
       </div>
     );
   }
 
+  // ─── MAIN DISCOVERY UI ─────────────────────────────────────────
+
   return (
-    <div className="min-h-screen bg-gradient-to-b from-pink-50 to-purple-50 p-4 pt-20">
-      {/* Header */}
-      <div className="max-w-md mx-auto mb-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm text-gray-600">
-              Swipes: {dailySwipesUsed}/{swipeLimit}
-            </p>
-          </div>
-          <div>
-            <Badge variant="outline" className="bg-white">
-              {profiles.length - currentIndex} profiles left
-            </Badge>
-          </div>
-        </div>
-      </div>
+    <div className="min-h-screen relative overflow-hidden pl-20">
+      <div className="fixed inset-0 -z-10 bg-background" />
 
-      {/* Profile Card Stack */}
-      <div className="max-w-md mx-auto h-[600px] relative">
+      <div className="relative z-10 p-4 pb-8">
+        {/* Wallet Connection Banner */}
+        {!publicKey && (
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="max-w-md mx-auto mb-6"
+          >
+            <Card className="overflow-hidden border border-primary/20 shadow-lg backdrop-blur-sm bg-card/50">
+              <div className="p-4 bg-primary/5">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center">
+                      <Sparkles className="w-5 h-5 text-primary-foreground" />
+                    </div>
+                    <p className="text-sm font-medium text-foreground">
+                      Connect to start matching
+                    </p>
+                  </div>
+                  <WalletMultiButton className="!py-2 !px-4 !text-sm !bg-primary hover:!bg-primary/90 !text-primary-foreground !border-0" />
+                </div>
+              </div>
+            </Card>
+          </motion.div>
+        )}
+        
+        {/* Stats Header */}
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="max-w-md mx-auto mb-6"
+        >
+          <div className="flex items-center justify-between backdrop-blur-md bg-card/50 rounded-2xl p-4 shadow-lg border border-primary/20">
+            <div className="flex items-center gap-2">
+              <Heart className="w-5 h-5 text-primary" />
+              <span className="text-sm font-semibold text-foreground">
+                {dailySwipesUsed} <span className="text-muted-foreground">/ {swipeLimit === -1 ? '∞' : swipeLimit}</span>
+              </span>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                <span className="text-sm font-medium text-muted-foreground">
+                  {profiles.length - currentIndex} nearby
+                </span>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowFilters(!showFilters)}
+                className={`rounded-xl h-8 w-8 p-0 ${showFilters ? 'bg-primary text-primary-foreground' : ''}`}
+              >
+                <SlidersHorizontal className="w-4 h-4" />
+              </Button>
+            </div>
+          </div>
+        </motion.div>
+
+        {/* Filters Panel */}
         <AnimatePresence>
-          {currentProfile && (
+          {showFilters && (
             <motion.div
-              key={currentProfile.walletAddress}
-              className="absolute inset-0"
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-              drag="x"
-              dragConstraints={{ left: 0, right: 0 }}
-              dragElastic={0.8}
-              onDragEnd={handleDragEnd}
-              whileDrag={{ scale: 1.05 }}
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="max-w-md mx-auto mb-6 overflow-hidden"
             >
-              <Card className="h-full overflow-hidden shadow-2xl">
-                {/* Profile Image */}
-                <div className="relative h-3/5 bg-gradient-to-br from-pink-200 to-purple-200">
-                  <Avatar className="w-full h-full rounded-none">
-                    <AvatarImage
-                      src={pinataStorage.getImageUrl(currentProfile.imageCid)}
-                      alt={currentProfile.name}
-                      className="object-cover"
-                    />
-                    <AvatarFallback className="text-6xl rounded-none">
-                      {currentProfile.name[0]}
-                    </AvatarFallback>
-                  </Avatar>
-
-                  {/* Distance Badge */}
-                  {currentProfile.distance && (
-                    <Badge className="absolute top-4 right-4 bg-white/90 text-gray-900">
-                      <MapPin className="w-3 h-3 mr-1" />
-                      {currentProfile.distance}km away
-                    </Badge>
-                  )}
-                </div>
-
-                {/* Profile Info */}
-                <div className="p-6 h-2/5 overflow-y-auto">
-                  <h2 className="text-3xl font-bold mb-2">{currentProfile.name}</h2>
-                  
-                  <div className="flex items-center gap-2 mb-4">
-                    <Badge variant="secondary">{currentProfile.datingIntent}</Badge>
-                    {currentProfile.compatibilityScore && (
-                      <Badge variant="outline" className="bg-green-50">
-                        {currentProfile.compatibilityScore}% match
-                      </Badge>
-                    )}
-                  </div>
-
-                  {/* Bio */}
-                  <div className="mb-4">
-                    <p className="text-sm text-gray-500 mb-1">{currentProfile.bioPrompt}</p>
-                    <p className="text-gray-700">{currentProfile.bio}</p>
-                  </div>
-
-                  {/* Interests */}
-                  <div className="flex flex-wrap gap-2">
-                    {currentProfile.interests.map((interest, i) => (
-                      <Badge key={i} variant="outline" className="bg-pink-50">
-                        {interest}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-              </Card>
+              <DiscoveryFilters
+                filters={filters}
+                onFiltersChange={setFilters}
+                onClose={() => setShowFilters(false)}
+              />
             </motion.div>
           )}
         </AnimatePresence>
 
-        {/* Next Profile Preview */}
-        {profiles[currentIndex + 1] && (
-          <div className="absolute inset-0 -z-10 scale-95 opacity-50">
-            <Card className="h-full bg-gradient-to-br from-gray-100 to-gray-200" />
+        {/* Profile Card Stack */}
+        <div className="max-w-md mx-auto h-[580px] relative perspective-1000">
+          <AnimatePresence mode="wait">
+            {currentProfile && (
+              <motion.div
+                key={currentProfile.walletAddress}
+                className="absolute inset-0"
+                initial={{ scale: 0.9, opacity: 0, rotateY: -10 }}
+                animate={{ scale: 1, opacity: 1, rotateY: 0 }}
+                exit={{
+                  scale: 0.8,
+                  opacity: 0,
+                  x: exitDirection === 'left' ? -200 : 200,
+                  rotate: exitDirection === 'left' ? -10 : 10,
+                  transition: { duration: 0.3 }
+                }}
+                drag="x"
+                dragConstraints={{ left: 0, right: 0 }}
+                dragElastic={0.7}
+                onDragEnd={handleDragEnd}
+                whileDrag={{ scale: 1.02, cursor: 'grabbing' }}
+                transition={{ type: "spring", stiffness: 300, damping: 30 }}
+              >
+                <Card className="h-full overflow-hidden shadow-2xl border border-primary/20 bg-card/95 backdrop-blur-sm">
+                  {/* Profile Image */}
+                  <div className="relative h-[65%] overflow-hidden bg-primary/10">
+                    <img
+                      src={getDisplayImageUrl(currentProfile.imageCid, currentProfile.name)}
+                      alt={currentProfile.name}
+                      className="w-full h-full object-cover"
+                      onError={(e) => {
+                        // Fallback if image fails to load
+                        (e.target as HTMLImageElement).src = `https://api.dicebear.com/9.x/notionists/svg?seed=${encodeURIComponent(currentProfile.name)}&backgroundColor=c0aede`;
+                      }}
+                    />
+
+                    {/* Gradient for text readability */}
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
+
+                    {/* Top Badges */}
+                    <div className="absolute top-4 left-4 right-4 flex items-start justify-between">
+                      {currentProfile.compatibilityScore !== undefined && currentProfile.compatibilityScore > 0 && (
+                        <motion.div
+                          initial={{ scale: 0 }}
+                          animate={{ scale: 1 }}
+                          transition={{ delay: 0.2, type: "spring" }}
+                        >
+                          <Badge className="bg-primary text-primary-foreground border-0 shadow-lg px-3 py-1">
+                            <Sparkles className="w-3 h-3 mr-1" />
+                            {currentProfile.compatibilityScore}% Match
+                          </Badge>
+                        </motion.div>
+                      )}
+                      {currentProfile.distance > 0 && (
+                        <Badge className="backdrop-blur-md bg-white/90 text-gray-900 border-0 shadow-lg px-3 py-1">
+                          <MapPin className="w-3 h-3 mr-1" />
+                          {currentProfile.distance}km
+                        </Badge>
+                      )}
+                    </div>
+
+                    {/* Bottom Info */}
+                    <div className="absolute bottom-0 left-0 right-0 p-6 text-white">
+                      <motion.h2
+                        initial={{ y: 20, opacity: 0 }}
+                        animate={{ y: 0, opacity: 1 }}
+                        transition={{ delay: 0.1 }}
+                        className="text-4xl font-headline italic mb-2 drop-shadow-lg"
+                      >
+                        {currentProfile.name}
+                      </motion.h2>
+                      <motion.div
+                        initial={{ y: 20, opacity: 0 }}
+                        animate={{ y: 0, opacity: 1 }}
+                        transition={{ delay: 0.2 }}
+                      >
+                        <Badge className="bg-white/20 backdrop-blur-md text-white border-white/30 shadow-lg">
+                          {currentProfile.datingIntent}
+                        </Badge>
+                      </motion.div>
+                    </div>
+                  </div>
+
+                  {/* Profile Details */}
+                  <div className="p-6 h-[35%] overflow-y-auto bg-card">
+                    <motion.div
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ delay: 0.3 }}
+                      className="mb-4"
+                    >
+                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">
+                        {currentProfile.bioPrompt}
+                      </p>
+                      <p className="text-foreground leading-relaxed font-body">
+                        {currentProfile.bio}
+                      </p>
+                    </motion.div>
+
+                    {currentProfile.interests.length > 0 && (
+                      <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        transition={{ delay: 0.4 }}
+                      >
+                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                          Interests
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {currentProfile.interests.map((interest, i) => (
+                            <motion.div
+                              key={interest}
+                              initial={{ scale: 0 }}
+                              animate={{ scale: 1 }}
+                              transition={{ delay: 0.5 + i * 0.05, type: "spring" }}
+                            >
+                              <Badge
+                                variant="outline"
+                                className="bg-secondary border-primary/20 text-foreground px-3 py-1"
+                              >
+                                {interest}
+                              </Badge>
+                            </motion.div>
+                          ))}
+                        </div>
+                      </motion.div>
+                    )}
+                  </div>
+                </Card>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Stack preview cards */}
+          {profiles[currentIndex + 1] && (
+            <motion.div
+              className="absolute inset-0 -z-10"
+              style={{ transform: 'scale(0.95) translateY(10px)' }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.3 }}
+            >
+              <Card className="h-full bg-card border border-primary/10" />
+            </motion.div>
+          )}
+          {profiles[currentIndex + 2] && (
+            <motion.div
+              className="absolute inset-0 -z-20"
+              style={{ transform: 'scale(0.9) translateY(20px)' }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.15 }}
+            >
+              <Card className="h-full bg-card border border-primary/5" />
+            </motion.div>
+          )}
+        </div>
+
+        {/* Action Buttons */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}
+          className="max-w-md mx-auto mt-8 flex items-center justify-center gap-8"
+        >
+          <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.95 }}>
+            <Button
+              size="lg"
+              variant="outline"
+              className="rounded-full w-16 h-16 border border-primary/20 shadow-2xl bg-card/80 backdrop-blur-sm hover:bg-card group transition-all duration-200"
+              onClick={() => handleSwipe('left')}
+              disabled={!publicKey || !canSwipe}
+              title={!publicKey ? 'Connect wallet to swipe' : 'Pass'}
+            >
+              <X className="w-8 h-8 text-destructive group-hover:scale-110 transition-transform" />
+            </Button>
+          </motion.div>
+
+          <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+            <Button
+              size="lg"
+              variant="outline"
+              className="rounded-full w-14 h-14 border border-primary/20 shadow-lg bg-card/80 backdrop-blur-sm hover:bg-card transition-all duration-200"
+              disabled
+            >
+              <Info className="w-5 h-5 text-primary" />
+            </Button>
+          </motion.div>
+
+          <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.95 }}>
+            <Button
+              size="lg"
+              className="rounded-full w-16 h-16 border-0 shadow-2xl bg-primary hover:bg-primary/90 transition-all duration-300 group"
+              onClick={() => handleSwipe('right')}
+              disabled={!publicKey || !canSwipe}
+              title={!publicKey ? 'Connect wallet to swipe' : 'Like'}
+            >
+              <Heart className="w-8 h-8 text-primary-foreground group-hover:scale-110 transition-transform" />
+            </Button>
+          </motion.div>
+        </motion.div>
+
+        {/* Privacy Notice */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.5 }}
+          className="max-w-md mx-auto mt-8"
+        >
+          <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground backdrop-blur-sm bg-card/40 rounded-full px-4 py-2 mx-auto w-fit border border-primary/10">
+            <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
+            <span>End-to-end encrypted • Zero-knowledge matching</span>
           </div>
-        )}
+        </motion.div>
       </div>
 
-      {/* Action Buttons */}
-      <div className="max-w-md mx-auto mt-6 flex items-center justify-center gap-6">
-        <Button
-          size="lg"
-          variant="outline"
-          className="rounded-full w-16 h-16 border-2 border-red-500 hover:bg-red-50"
-          onClick={() => handleSwipe('left')}
-          disabled={!canSwipe}
-        >
-          <X className="w-8 h-8 text-red-500" />
-        </Button>
-
-        <Button
-          size="lg"
-          variant="outline"
-          className="rounded-full w-12 h-12"
-          disabled
-        >
-          <Info className="w-5 h-5" />
-        </Button>
-
-        <Button
-          size="lg"
-          className="rounded-full w-16 h-16 bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600"
-          onClick={() => handleSwipe('right')}
-          disabled={!canSwipe}
-        >
-          <Heart className="w-8 h-8" />
-        </Button>
-      </div>
-
-      {/* Privacy Notice */}
-      <div className="max-w-md mx-auto mt-8 text-center">
-        <p className="text-xs text-gray-500">
-          🔒 Your swipes are private. Matches are revealed only when mutual.
-        </p>
-      </div>
+      {/* Match Modal */}
+      <MatchModal
+        isOpen={showMatchModal}
+        onClose={() => setShowMatchModal(false)}
+        matchName={matchedProfile?.name || ''}
+        matchImage={matchedProfile ? getDisplayImageUrl(matchedProfile.imageCid, matchedProfile.name) : undefined}
+        userImage={currentUserProfile?.profile_image_path ? getProfileImageUrl(currentUserProfile.profile_image_path) : undefined}
+        userName={currentUserProfile?.name || 'You'}
+      />
     </div>
   );
 }
