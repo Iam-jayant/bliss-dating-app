@@ -37,12 +37,19 @@ export function useBlissSession() {
       const savedSession = localStorage.getItem(STORAGE_KEY);
       if (savedSession) {
         const parsed = JSON.parse(savedSession);
-        // Only restore if wallet is still connected and addresses match
-        if (connected && publicKey && parsed.address === publicKey) {
+        if (publicKey && parsed.address === publicKey) {
           setSession(prev => ({
             ...prev,
             ...parsed,
             isConnected: connected,
+          }));
+        } else if (!publicKey && parsed.address) {
+          // Wallet is still reconnecting, restore session optimistically
+          console.log('⏳ Wallet reconnecting, restoring session...');
+          setSession(prev => ({
+            ...prev,
+            ...parsed,
+            isConnected: false, // Will be updated when wallet connects
           }));
         }
       }
@@ -53,8 +60,13 @@ export function useBlissSession() {
 
   // Update session when wallet connection changes and check for existing profile
   useEffect(() => {
+    let timeoutId: NodeJS.Timeout;
+    
     async function checkProfile() {
       if (connected && publicKey) {
+        // Clear any pending disconnection
+        clearTimeout(timeoutId);
+        
         try {
           const profile = await getProfile(publicKey);
           
@@ -88,22 +100,34 @@ export function useBlissSession() {
             hasProfile: false,
           }));
         }
-      } else {
-        // Wallet disconnected - clear session
-        setSession(prev => ({
-          ...prev,
-          isConnected: false,
-          address: null,
-          verificationRecord: null,
-          isVerified: false,
-          sessionId: null,
-          hasProfile: false,
-        }));
+      } else if (!connected && session.isConnected) {
+        // Wallet disconnected - wait a moment before clearing session
+        // (prevents clearing during navigation/page transitions)
+        console.log('⏳ Wallet disconnected, waiting before clearing session...');
+        timeoutId = setTimeout(() => {
+          console.log('🔌 Clearing session after wallet disconnect');
+          setSession(prev => ({
+            ...prev,
+            isConnected: false,
+            address: null,
+            verificationRecord: null,
+            isVerified: false,
+            sessionId: null,
+            hasProfile: false,
+          }));
+        }, 500); // 500ms delay to allow for reconnection during navigation
       }
     }
     
     checkProfile();
-  }, [connected, publicKey]);
+    
+    // Cleanup timeout on unmount or when dependencies change
+    return () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    };
+  }, [connected, publicKey, session.isConnected]);
 
   // Save session to localStorage whenever it changes
   useEffect(() => {

@@ -31,7 +31,7 @@ export function AleoWalletProvider({ children }: AleoWalletProviderProps) {
       wallets={wallets}
       decryptPermission={DecryptPermission.UponRequest}
       network={WalletAdapterNetwork.TestnetBeta}
-      autoConnect={false}
+      autoConnect={true} // Automatically reconnect wallet on page load/navigation
     >
       <WalletModalProvider>
         {children}
