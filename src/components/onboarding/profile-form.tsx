@@ -125,25 +125,25 @@ export function ProfileForm({ walletAddress, onSuccess }: ProfileFormProps) {
       <div className="space-y-6">
         {/* Name Input with Verified Badge */}
         <div>
-          <Label htmlFor="name" className="text-sm text-muted-foreground">
+          <Label htmlFor="name" className="text-sm font-medium text-foreground mb-2 block">
             Name
           </Label>
-          <div className="relative mt-1">
+          <div className="relative">
             <Input
               id="name"
               value={name}
               onChange={(e) => setName(e.target.value)}
               maxLength={50}
               placeholder="Your name"
-              className="bg-background/50 border-white/10 pr-10"
+              className="bg-background/50 border-border pr-10 py-6"
             />
-            <CheckCircle2 className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-blue-500" />
+            <CheckCircle2 className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-primary" />
           </div>
         </div>
 
         {/* Multi-Photo Upload */}
         <div>
-          <Label className="text-sm text-muted-foreground">
+          <Label className="text-sm font-medium text-foreground mb-2 block">
             Profile Photos (3-6 required)
           </Label>
           <div className="mt-2">
@@ -154,18 +154,18 @@ export function ProfileForm({ walletAddress, onSuccess }: ProfileFormProps) {
               required={3}
             />
           </div>
-          <p className="text-xs text-muted-foreground mt-2">
+          <p className="text-xs text-muted-foreground mt-3">
             Upload 3-6 photos. First photo will be your main profile picture.
           </p>
         </div>
 
         {/* Bio Prompt Selection */}
         <div>
-          <Label htmlFor="bioPrompt" className="text-sm text-muted-foreground">
+          <Label htmlFor="bioPrompt" className="text-sm font-medium text-foreground mb-2 block">
             Bio Prompt
           </Label>
           <Select value={bioPrompt} onValueChange={(value) => setBioPrompt(value as BioPromptType)}>
-            <SelectTrigger id="bioPrompt" className="mt-1 bg-background/50 border-white/10">
+            <SelectTrigger id="bioPrompt" className="bg-background/50 border-border py-6">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -181,7 +181,7 @@ export function ProfileForm({ walletAddress, onSuccess }: ProfileFormProps) {
 
         {/* Bio Textarea */}
         <div>
-          <Label htmlFor="bio" className="text-sm text-muted-foreground">
+          <Label htmlFor="bio" className="text-sm font-medium text-foreground mb-2 block">
             Bio
           </Label>
           <Textarea
@@ -191,19 +191,19 @@ export function ProfileForm({ walletAddress, onSuccess }: ProfileFormProps) {
             maxLength={200}
             rows={4}
             placeholder="Your response..."
-            className="mt-1 bg-background/50 border-white/10 resize-none"
+            className="bg-background/50 border-border resize-none"
           />
-          <p className="text-xs text-muted-foreground mt-1">
+          <p className="text-xs text-muted-foreground mt-2">
             {bio.length}/200 characters
           </p>
         </div>
 
         {/* Interests */}
         <div>
-          <Label htmlFor="interests" className="text-sm text-muted-foreground">
+          <Label htmlFor="interests" className="text-sm font-medium text-foreground mb-2 block">
             Interests (Max 4)
           </Label>
-          <div className="flex gap-2 mt-1 mb-2">
+          <div className="flex gap-2 mb-3">
             <Input
               id="interests"
               value={interestInput}
@@ -215,23 +215,23 @@ export function ProfileForm({ walletAddress, onSuccess }: ProfileFormProps) {
                 }
               }}
               placeholder="Add an interest"
-              className="bg-background/50 border-white/10"
+              className="bg-background/50 border-border py-6"
             />
             <Button
               type="button"
               onClick={addInterest}
               disabled={interests.length >= 4}
-              className="bg-primary/20 hover:bg-primary/30 text-primary"
+              className="bg-primary/20 hover:bg-primary/30 text-primary px-6 rounded-full font-semibold"
             >
               Add
             </Button>
           </div>
           <div className="flex flex-wrap gap-2">
             {interests.map((interest) => (
-              <Badge key={interest} variant="secondary" className="px-3 py-1">
+              <Badge key={interest} variant="secondary" className="px-4 py-2 text-sm rounded-full">
                 {interest}
                 <X
-                  className="ml-1 w-3 h-3 cursor-pointer"
+                  className="ml-2 w-3 h-3 cursor-pointer hover:text-destructive transition-colors"
                   onClick={() => removeInterest(interest)}
                 />
               </Badge>
@@ -241,13 +241,13 @@ export function ProfileForm({ walletAddress, onSuccess }: ProfileFormProps) {
 
         {/* Dating Intent */}
         <div>
-          <Label className="text-sm text-muted-foreground">
+          <Label className="text-sm font-medium text-foreground mb-3 block">
             Dating Intent
           </Label>
           <RadioGroup
             value={datingIntent}
             onValueChange={(value) => setDatingIntent(value as DatingIntent)}
-            className="mt-2 space-y-2"
+            className="space-y-3"
           >
             <div className="flex items-center space-x-2">
               <RadioGroupItem value="Long-term" id="long-term" />
@@ -287,7 +287,7 @@ export function ProfileForm({ walletAddress, onSuccess }: ProfileFormProps) {
         <Button
           onClick={handleSubmit}
           disabled={loading}
-          className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
+          className="w-full bg-primary hover:bg-primary/90 text-primary-foreground py-7 rounded-full font-semibold shadow-lg hover:shadow-xl transition-all hover:scale-105"
         >
           {loading ? 'Creating Profile...' : 'Create Profile'}
         </Button>

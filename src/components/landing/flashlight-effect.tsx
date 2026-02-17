@@ -49,15 +49,6 @@ export function FlashlightEffect({ children }: { children: React.ReactNode }) {
   return (
     <div className="relative">
       {children}
-      <div
-        className="flashlight-blur pointer-events-none fixed inset-0 z-30 transition-opacity duration-300 ease-out"
-        style={{
-          backdropFilter: 'blur(4px)',
-          opacity: isMounted ? scrollOpacity : 0,
-          WebkitMaskImage: `radial-gradient(250px circle at var(--mouse-x, 50vw) var(--mouse-y, 50vh), transparent 20%, black 100%)`,
-          maskImage: `radial-gradient(250px circle at var(--mouse-x, 50vw) var(--mouse-y, 50vh), transparent 20%, black 100%)`,
-        }}
-      />
     </div>
   );
 }

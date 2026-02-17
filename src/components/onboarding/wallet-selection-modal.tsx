@@ -56,10 +56,10 @@ export function WalletSelectionModal({ open, onClose }: WalletSelectionModalProp
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-            <div className="wallet-adapter-modal-wrapper bg-[#1e1e1e] text-white rounded-2xl p-6 max-w-sm w-full shadow-2xl relative font-sans">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md p-4">
+            <div className="wallet-adapter-modal-wrapper bg-card border border-border rounded-2xl p-8 max-w-md w-full shadow-2xl relative">
                 <button
-                    className="wallet-adapter-modal-button-close absolute top-4 right-4 text-gray-400 hover:text-white transition-colors"
+                    className="wallet-adapter-modal-button-close absolute top-6 right-6 text-muted-foreground hover:text-foreground transition-colors"
                     onClick={onClose}
                 >
                     <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor">
@@ -67,7 +67,7 @@ export function WalletSelectionModal({ open, onClose }: WalletSelectionModalProp
                     </svg>
                 </button>
 
-                <h1 className="wallet-adapter-modal-title text-xl font-bold text-center mb-6 mt-2">
+                <h1 className="wallet-adapter-modal-title font-headline text-2xl italic text-center mb-8 mt-2">
                     Connect an Aleo wallet
                 </h1>
 
@@ -79,8 +79,8 @@ export function WalletSelectionModal({ open, onClose }: WalletSelectionModalProp
                             <li key={wallet.adapter.name}>
                                 <button
                                     className={`
-                                        wallet-adapter-button w-full flex items-center justify-between p-3 rounded-xl 
-                                        bg-[#2c2c2c] hover:bg-[#363636] transition-colors border border-transparent hover:border-[#4caf50]
+                                        wallet-adapter-button w-full flex items-center justify-between p-4 rounded-xl 
+                                        bg-background/50 hover:bg-primary/10 transition-all border border-border hover:border-primary/50
                                         ${!isInstalled && 'opacity-60'}
                                     `}
                                     tabIndex={0}
@@ -92,13 +92,13 @@ export function WalletSelectionModal({ open, onClose }: WalletSelectionModalProp
                                             <img
                                                 src={wallet.adapter.icon}
                                                 alt={`${wallet.adapter.name} icon`}
-                                                className="w-8 h-8 rounded-full"
+                                                className="w-10 h-10 rounded-full"
                                             />
                                         </i>
-                                        <span className="font-medium text-base">{wallet.adapter.name}</span>
+                                        <span className="font-semibold text-base">{wallet.adapter.name}</span>
                                     </div>
                                     {isInstalled && (
-                                        <span className="text-xs bg-[#1a1a1a] text-gray-400 px-2 py-1 rounded">
+                                        <span className="text-xs bg-primary/20 text-primary px-3 py-1.5 rounded-full font-medium">
                                             Installed
                                         </span>
                                     )}

@@ -16,7 +16,7 @@ export function HowItWorks() {
 
     if (isMobile) {
         return (
-            <section className="py-20 md:py-32">
+            <section id="how-it-works" className="py-20 md:py-32">
                 <div className="container mx-auto px-4">
                     <div className="text-center">
                         <h2 className="font-headline text-4xl italic md:text-5xl">From Secret to Signal.</h2>
@@ -54,7 +54,7 @@ export function HowItWorks() {
     }
 
     return (
-        <section ref={targetRef} className="relative h-[300vh] py-20 md:py-32">
+        <section id="how-it-works" ref={targetRef} className="relative h-[300vh] py-20 md:py-32">
             <div className="sticky top-0 flex h-screen flex-col items-center justify-start overflow-hidden pt-16 md:pt-24">
                 {/* Title Area */}
                 <div className="container mx-auto px-4 text-center">
