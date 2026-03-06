@@ -1,8 +1,8 @@
 'use client';
 
 import React from 'react';
-import { useWallet } from '@demox-labs/aleo-wallet-adapter-react';
-import { WalletMultiButton } from '@demox-labs/aleo-wallet-adapter-reactui';
+import { useWallet } from '@provablehq/aleo-wallet-adaptor-react';
+import { WalletMultiButton } from '@provablehq/aleo-wallet-adaptor-react-ui';
 import { Button } from '@/components/ui/button';
 import { Wallet, WalletIcon } from 'lucide-react';
 
@@ -15,7 +15,7 @@ export function WalletConnectButton({
   className = '', 
   variant = 'default' 
 }: WalletConnectButtonProps) {
-  const { wallet, connected, connecting, publicKey } = useWallet();
+  const { wallet, connected, connecting, address: publicKey } = useWallet();
 
   if (connected && publicKey) {
     return (
@@ -49,7 +49,7 @@ export function CustomWalletButton({
   className = '', 
   variant = 'default' 
 }: WalletConnectButtonProps) {
-  const { wallet, connected, connecting, publicKey } = useWallet();
+  const { wallet, connected, connecting, address: publicKey } = useWallet();
 
   const getButtonText = () => {
     if (connecting) return 'Connecting...';
