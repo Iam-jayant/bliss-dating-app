@@ -1,16 +1,17 @@
 'use client';
 
 import React, { useMemo } from 'react';
-import { WalletProvider } from '@demox-labs/aleo-wallet-adapter-react';
-import { WalletModalProvider } from '@demox-labs/aleo-wallet-adapter-reactui';
-import { LeoWalletAdapter } from '@demox-labs/aleo-wallet-adapter-leo';
-import {
-  DecryptPermission,
-  WalletAdapterNetwork,
-} from '@demox-labs/aleo-wallet-adapter-base';
+import { AleoWalletProvider as ProvableWalletProvider } from '@provablehq/aleo-wallet-adaptor-react';
+import { WalletModalProvider } from '@provablehq/aleo-wallet-adaptor-react-ui';
+import { ShieldWalletAdapter } from '@provablehq/aleo-wallet-adaptor-shield';
+import { LeoWalletAdapter } from '@provablehq/aleo-wallet-adaptor-leo';
+import { PuzzleWalletAdapter } from '@provablehq/aleo-wallet-adaptor-puzzle';
+import { FoxWalletAdapter } from '@provablehq/aleo-wallet-adaptor-fox';
+import { SoterWalletAdapter } from '@provablehq/aleo-wallet-adaptor-soter';
+import { Network } from '@provablehq/aleo-types';
+import { DecryptPermission } from '@provablehq/aleo-wallet-adaptor-core';
 
-// Import wallet adapter CSS
-import '@demox-labs/aleo-wallet-adapter-reactui/styles.css';
+import '@provablehq/aleo-wallet-adaptor-react-ui/dist/styles.css';
 
 interface AleoWalletProviderProps {
   children: React.ReactNode;
@@ -19,23 +20,26 @@ interface AleoWalletProviderProps {
 export function AleoWalletProvider({ children }: AleoWalletProviderProps) {
   const wallets = useMemo(
     () => [
-      new LeoWalletAdapter({
-        appName: 'Bliss Age Verification',
-      }),
+      new ShieldWalletAdapter(),   // Shield is the preferred wallet for Bliss
+      new PuzzleWalletAdapter(),
+      new LeoWalletAdapter(),
+      new FoxWalletAdapter(),
+      new SoterWalletAdapter(),
     ],
     []
   );
 
   return (
-    <WalletProvider
+    <ProvableWalletProvider
       wallets={wallets}
+      network={Network.TESTNET}
       decryptPermission={DecryptPermission.UponRequest}
-      network={WalletAdapterNetwork.TestnetBeta}
-      autoConnect={true} // Automatically reconnect wallet on page load/navigation
+      autoConnect={true}
+      onError={(error) => console.error('Wallet error:', error)}
     >
       <WalletModalProvider>
         {children}
       </WalletModalProvider>
-    </WalletProvider>
+    </ProvableWalletProvider>
   );
 }

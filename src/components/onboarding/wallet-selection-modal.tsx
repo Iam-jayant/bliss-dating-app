@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useMemo, useState, useEffect } from 'react';
-import { useWallet } from '@demox-labs/aleo-wallet-adapter-react';
-import { WalletReadyState, DecryptPermission, WalletAdapterNetwork } from '@demox-labs/aleo-wallet-adapter-base';
+import { useWallet } from '@provablehq/aleo-wallet-adaptor-react';
+import { WalletReadyState } from '@provablehq/aleo-wallet-standard';
+import { Network } from '@provablehq/aleo-types';
 
 interface WalletSelectionModalProps {
     open: boolean;
@@ -10,10 +11,10 @@ interface WalletSelectionModalProps {
 }
 
 export function WalletSelectionModal({ open, onClose }: WalletSelectionModalProps) {
-    const { wallets, select, connect, wallet } = useWallet();
-    const [pendingWalletName, setPendingWalletName] = useState<string | null>(null);
+    const { wallets, selectWallet, connect, connected } = useWallet();
+    const [connecting, setConnecting] = useState(false);
+    const [error, setError] = useState<string | null>(null);
 
-    // Filter wallets to show installed ones first
     const sortedWallets = useMemo(() => {
         if (!wallets) return [];
         return [...wallets].sort((a, b) => {
@@ -23,35 +24,28 @@ export function WalletSelectionModal({ open, onClose }: WalletSelectionModalProp
         });
     }, [wallets]);
 
-    // Handle connection only after selection is fully propagated
     useEffect(() => {
-        const connectWallet = async () => {
-            if (pendingWalletName && wallet && wallet.adapter.name === pendingWalletName) {
-                try {
-                    setPendingWalletName(null); // Reset pending state
-                    await connect(DecryptPermission.UponRequest, WalletAdapterNetwork.TestnetBeta);
-                    onClose();
-                } catch (error) {
-                    console.error('Failed to connect wallet:', error);
-                    // Keep modal open on error
-                }
-            }
-        };
-
-        connectWallet();
-    }, [wallet, pendingWalletName, connect, onClose]);
+        if (connected && open) {
+            onClose();
+        }
+    }, [connected, open, onClose]);
 
     if (!open) return null;
 
-    const handleWalletClick = (event: React.MouseEvent, walletName: string) => {
+    const handleWalletClick = async (event: React.MouseEvent, walletName: string) => {
         event.preventDefault();
+        setError(null);
+        setConnecting(true);
         try {
-            // Step 1: Select the wallet
-            select(walletName as any);
-            // Step 2: Set pending flag to trigger effect
-            setPendingWalletName(walletName);
-        } catch (error) {
-            console.error('Failed to select wallet:', error);
+            selectWallet(walletName as any);
+            await new Promise(resolve => setTimeout(resolve, 150));
+            await connect(Network.TESTNET);
+            onClose();
+        } catch (err) {
+            console.error('Failed to connect wallet:', err);
+            setError(err instanceof Error ? err.message : 'Connection failed');
+        } finally {
+            setConnecting(false);
         }
     };
 
@@ -71,31 +65,43 @@ export function WalletSelectionModal({ open, onClose }: WalletSelectionModalProp
                     Connect an Aleo wallet
                 </h1>
 
+                {error && (
+                    <div className="mb-4 p-3 bg-destructive/10 border border-destructive/20 rounded-lg text-destructive text-sm text-center">
+                        {error}
+                    </div>
+                )}
+
+                {connecting && (
+                    <div className="mb-4 p-3 bg-primary/10 border border-primary/20 rounded-lg text-primary text-sm text-center">
+                        Connecting...
+                    </div>
+                )}
+
                 <ul className="wallet-adapter-modal-list space-y-3">
-                    {sortedWallets.map((wallet) => {
-                        const isInstalled = wallet.readyState === WalletReadyState.Installed;
+                    {sortedWallets.map((w) => {
+                        const isInstalled = w.readyState === WalletReadyState.Installed;
 
                         return (
-                            <li key={wallet.adapter.name}>
+                            <li key={w.adapter.name}>
                                 <button
                                     className={`
                                         wallet-adapter-button w-full flex items-center justify-between p-4 rounded-xl 
                                         bg-background/50 hover:bg-primary/10 transition-all border border-border hover:border-primary/50
-                                        ${!isInstalled && 'opacity-60'}
+                                        ${connecting ? 'opacity-50 pointer-events-none' : ''}
                                     `}
                                     tabIndex={0}
                                     type="button"
-                                    onClick={(e) => isInstalled && handleWalletClick(e, wallet.adapter.name)}
+                                    onClick={(e) => handleWalletClick(e, w.adapter.name)}
                                 >
                                     <div className="flex items-center gap-3">
                                         <i className="wallet-adapter-button-start-icon flex-shrink-0">
                                             <img
-                                                src={wallet.adapter.icon}
-                                                alt={`${wallet.adapter.name} icon`}
+                                                src={w.adapter.icon}
+                                                alt={`${w.adapter.name} icon`}
                                                 className="w-10 h-10 rounded-full"
                                             />
                                         </i>
-                                        <span className="font-semibold text-base">{wallet.adapter.name}</span>
+                                        <span className="font-semibold text-base">{w.adapter.name}</span>
                                     </div>
                                     {isInstalled && (
                                         <span className="text-xs bg-primary/20 text-primary px-3 py-1.5 rounded-full font-medium">
