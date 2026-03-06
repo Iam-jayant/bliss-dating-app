@@ -8,7 +8,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useWallet } from '@demox-labs/aleo-wallet-adapter-react';
+import { useWallet } from '@provablehq/aleo-wallet-adaptor-react';
 import {
   Heart,
   Shield,
@@ -43,7 +43,7 @@ const BIO_PROMPTS = [
 ];
 
 export function NewOnboardingFlow() {
-  const { publicKey, connected } = useWallet();
+  const { address: publicKey, connected } = useWallet();
   const router = useRouter();
 
   const [step, setStep] = useState<OnboardingStep>('welcome');
