@@ -1,16 +1,18 @@
 import { ALEO_CONFIG } from './config';
 import { validateContractPrivacy, validateVerificationRecord, sanitizeError, privacyLog } from '../privacy-utils';
-import {
-  Transaction,
-  WalletAdapterNetwork,
-  WalletNotConnectedError
-} from '@demox-labs/aleo-wallet-adapter-base';
 import type {
   VerificationRecord,
   AgeVerificationResult,
   ProofOfPossessionResult,
   AleoTransaction
 } from './types';
+
+class WalletNotConnectedError extends Error {
+  constructor() {
+    super('Wallet not connected');
+    this.name = 'WalletNotConnectedError';
+  }
+}
 
 /**
  * Aleo service for interacting with the age verification contract
@@ -61,28 +63,18 @@ export class AleoService {
         publicKey: walletAdapter.publicKey
       });
 
-      const aleoTransaction = Transaction.createTransaction(
-        walletAdapter.publicKey,
-        WalletAdapterNetwork.TestnetBeta,
-        this.programId,
-        ALEO_CONFIG.FUNCTIONS.VERIFY_AGE,
+      const txOptions = {
+        program: this.programId,
+        function: ALEO_CONFIG.FUNCTIONS.VERIFY_AGE,
         inputs,
         fee,
-        false // Use public fee (not private) - this uses public credits which you have
-      );
+        privateFee: false,
+      };
 
-      if (!aleoTransaction) {
-        throw new Error('Failed to create transaction');
-      }
-
-      // Hack: Convert to plain object to ensure clean serialization for the wallet extension
-      // Some versions of the adapter fail if passed a class instance with methods
-      const plainTransaction = JSON.parse(JSON.stringify(aleoTransaction));
-
-      console.log('Requesting transaction from wallet:', plainTransaction);
+      console.log('Requesting transaction from wallet:', txOptions);
 
       // Request transaction from wallet - this should trigger the wallet popup
-      const transactionId = await walletAdapter.requestTransaction(plainTransaction);
+      const transactionId = await walletAdapter.requestTransaction(txOptions);
 
       if (!transactionId) {
         throw new Error('Transaction request failed (no ID returned)');
@@ -164,24 +156,16 @@ export class AleoService {
       const inputs = [recordInput];
       const fee = ALEO_CONFIG.FEE_MICROCREDITS;
 
-      const aleoTransaction = Transaction.createTransaction(
-        walletAdapter.publicKey,
-        WalletAdapterNetwork.TestnetBeta,
-        this.programId,
-        ALEO_CONFIG.FUNCTIONS.PROVE_POSSESSION,
+      const txOptions = {
+        program: this.programId,
+        function: ALEO_CONFIG.FUNCTIONS.PROVE_POSSESSION,
         inputs,
-        fee
-      );
-
-      if (!aleoTransaction) {
-        throw new Error('Failed to create transaction');
-      }
-
-      // Hack: Convert to plain object to ensure clean serialization for the wallet extension
-      const plainTransaction = JSON.parse(JSON.stringify(aleoTransaction));
+        fee,
+        privateFee: false,
+      };
 
       // Request transaction from wallet
-      const transactionId = await walletAdapter.requestTransaction(plainTransaction);
+      const transactionId = await walletAdapter.requestTransaction(txOptions);
 
       if (!transactionId) {
         throw new Error('Transaction request failed (no ID returned)');
@@ -325,20 +309,17 @@ export class AleoService {
       const inputs = [walletAdapter.publicKey, "100000u64"]; // Transfer 0.1 credit to self
       const fee = 100000; // 0.1 credit fee
 
-      const aleoTransaction = Transaction.createTransaction(
-        walletAdapter.publicKey,
-        WalletAdapterNetwork.TestnetBeta,
-        'credits.aleo',
-        'transfer_public',
+      const txOptions = {
+        program: 'credits.aleo',
+        function: 'transfer_public',
         inputs,
-        fee
-      );
+        fee,
+        privateFee: false,
+      };
 
-      // Hack: Convert to plain object to ensure clean serialization for the wallet extension
-      const plainTransaction = JSON.parse(JSON.stringify(aleoTransaction));
-      console.log('Requesting test transaction:', plainTransaction);
+      console.log('Requesting test transaction:', txOptions);
 
-      const transactionId = await walletAdapter.requestTransaction(plainTransaction);
+      const transactionId = await walletAdapter.requestTransaction(txOptions);
       return { success: true, transactionId };
     } catch (error) {
       console.error('Test transaction failed:', error);
