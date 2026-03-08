@@ -22,7 +22,7 @@ interface SubscriptionModalProps {
 type FlowState = 'select' | 'processing' | 'success' | 'error';
 
 export function SubscriptionModal({ isOpen, onClose, onSuccess }: SubscriptionModalProps) {
-  const { address: publicKey, executeTransaction, transactionStatus } = useWallet();
+  const { address: publicKey, executeTransaction, transactionStatus, requestRecords } = useWallet();
   const [selectedTier, setSelectedTier] = useState<'premium' | 'plus'>('premium');
   const [flowState, setFlowState] = useState<FlowState>('select');
   const [txHash, setTxHash] = useState<string>('');
@@ -31,7 +31,7 @@ export function SubscriptionModal({ isOpen, onClose, onSuccess }: SubscriptionMo
   const tier = SUBSCRIPTION_TIERS[selectedTier];
 
   const handlePurchase = async () => {
-    if (!publicKey || !executeTransaction || !transactionStatus) return;
+    if (!publicKey || !executeTransaction || !transactionStatus || !requestRecords) return;
 
     setFlowState('processing');
     setErrorMessage('');
@@ -48,7 +48,12 @@ export function SubscriptionModal({ isOpen, onClose, onSuccess }: SubscriptionMo
         return { status: s.status, transactionId: s.transactionId || id };
       };
 
-      const result = await purchaseSubscription(selectedTier, executeAdapter, statusAdapter);
+      const recordsAdapter = async (programId: string) => {
+        const recs = await requestRecords(programId);
+        return recs as any[];
+      };
+
+      const result = await purchaseSubscription(selectedTier, executeAdapter, statusAdapter, recordsAdapter);
 
       saveSubscriptionToCache(publicKey, selectedTier, result.txHash);
       setTxHash(result.txHash);
