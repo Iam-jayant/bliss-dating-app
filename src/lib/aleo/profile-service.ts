@@ -1,18 +1,9 @@
-/**
- * Aleo Service Extensions for Profile, Matching, and Subscriptions
- * Extends the base AleoService with Wave 2 contract interactions
- */
-
 import { ALEO_CONFIG } from './config';
 
 const PROFILE_PROGRAM = process.env.NEXT_PUBLIC_PROFILE_VERIFICATION_PROGRAM || 'bliss_profile_verification.aleo';
 const MATCHING_PROGRAM = process.env.NEXT_PUBLIC_COMPATIBILITY_MATCHING_PROGRAM || 'bliss_compatibility_matching.aleo';
 const SUBSCRIPTION_PROGRAM = process.env.NEXT_PUBLIC_SUBSCRIPTION_ACCESS_PROGRAM || 'bliss_subscription_access.aleo';
 
-/**
- * Extended Aleo service for Wave 2 contracts
- * Handles profile verification, matching, and subscriptions
- */
 export class AleoProfileService {
   private apiUrl: string;
 
@@ -20,9 +11,7 @@ export class AleoProfileService {
     this.apiUrl = ALEO_CONFIG.API_URL;
   }
 
-  /**
-   * Create profile on-chain via bliss_profile_verification.aleo::create_profile
-   */
+
   async createProfileOnChain(
     walletAddress: string,
     interestsBitfield: number,
@@ -30,8 +19,7 @@ export class AleoProfileService {
     locationGeohash: number,
     profileDataCid: bigint
   ): Promise<void> {
-    // Production: Submits on-chain transaction to profile_verification.aleo
-    // Development: Uses local cache for faster testing
+
     console.log('📝 Creating on-chain profile record:', {
       owner: walletAddress.slice(0, 12) + '...',
       interestsBitfield,
@@ -52,9 +40,7 @@ export class AleoProfileService {
     this.setLocalProfiles(profiles);
   }
 
-  /**
-   * Update profile on-chain
-   */
+
   async updateProfileOnChain(
     walletAddress: string,
     interestsBitfield: number,
@@ -76,9 +62,7 @@ export class AleoProfileService {
     this.setLocalProfiles(profiles);
   }
 
-  /**
-   * Get profile CID from on-chain record
-   */
+
   async getProfileCid(walletAddress: string): Promise<string | null> {
     // In production, query the Aleo blockchain for the profile record
     // For MVP, check local cache
