@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { useWallet } from '@demox-labs/aleo-wallet-adapter-react';
+import { useWallet } from '@provablehq/aleo-wallet-adaptor-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -20,7 +20,7 @@ export function AgeVerificationForm({
   onVerificationComplete,
   className = '' 
 }: AgeVerificationFormProps) {
-  const { connected, publicKey, requestTransaction } = useWallet();
+  const { connected, address: publicKey, executeTransaction } = useWallet();
   const [age, setAge] = useState('');
   const [isVerifying, setIsVerifying] = useState(false);
   const [verificationResult, setVerificationResult] = useState<{
@@ -55,7 +55,7 @@ export function AgeVerificationForm({
     try {
       const result = await aleoService.verifyAge(ageNumber, { 
         publicKey, 
-        requestTransaction 
+        requestTransaction: executeTransaction 
       });
       setVerificationResult(result);
 

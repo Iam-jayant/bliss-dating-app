@@ -17,12 +17,14 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Input } from '@/components/ui/input';
-import { useWallet } from '@demox-labs/aleo-wallet-adapter-react';
-import { WalletMultiButton } from '@demox-labs/aleo-wallet-adapter-reactui';
+import { useWallet } from '@provablehq/aleo-wallet-adaptor-react';
+import { WalletMultiButton } from '@provablehq/aleo-wallet-adaptor-react-ui';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { getProfile, getProfileByHash, getProfileImageUrl } from '@/lib/storage/profile';
 import { getMutualMatches } from '@/lib/matching/compatibility-service';
 import { seedDemoData } from '@/lib/seed-profiles';
+import { useSubscription } from '@/hooks/use-subscription';
+import { SubscriptionModal } from '@/components/subscription/subscription-modal';
 import {
   saveMessage,
   getChatMessages,
@@ -51,10 +53,11 @@ function getDisplayImage(imageCid: string, name: string): string {
 }
 
 export default function MessagesPage() {
-  const { publicKey } = useWallet();
+  const { address: publicKey } = useWallet();
   const router = useRouter();
   const searchParams = useSearchParams();
   const chatWith = searchParams.get('chat');
+  const { tier, canChat, refresh: refreshSubscription } = useSubscription();
   
   const [myHash, setMyHash] = useState<string>('');
   const [chats, setChats] = useState<Chat[]>([]);
@@ -62,6 +65,7 @@ export default function MessagesPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [messageInput, setMessageInput] = useState('');
   const [loading, setLoading] = useState(true);
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const unsubscribeRef = useRef<(() => void) | null>(null);
 
@@ -264,6 +268,20 @@ export default function MessagesPage() {
 
   const selectedChatData = chats.find(c => c.walletHash === selectedChat);
 
+  const activeChatLimit = tier.limits.activeChats;
+  const isOverChatLimit = (chatIndex: number) => {
+    if (activeChatLimit === 0) return false;
+    return chatIndex >= activeChatLimit;
+  };
+
+  const handleSelectChat = (walletHash: string, index: number) => {
+    if (isOverChatLimit(index)) {
+      setShowUpgradeModal(true);
+      return;
+    }
+    setSelectedChat(walletHash);
+  };
+
   // ─── MAIN MESSAGING UI ────────────────────────────────────────
 
   return (
@@ -296,14 +314,14 @@ export default function MessagesPage() {
               </Button>
             </div>
           ) : (
-            chats.map((chat) => (
+            chats.map((chat, index) => (
               <motion.button
                 key={chat.walletHash}
-                onClick={() => setSelectedChat(chat.walletHash)}
+                onClick={() => handleSelectChat(chat.walletHash, index)}
                 whileHover={{ backgroundColor: 'rgba(0,0,0,0.02)' }}
                 className={`w-full p-4 flex items-center gap-3 border-b border-primary/10 transition-colors ${
                   selectedChat === chat.walletHash ? 'bg-secondary' : ''
-                }`}
+                } ${isOverChatLimit(index) ? 'opacity-50' : ''}`}
               >
                 <Avatar className="w-12 h-12">
                   <AvatarImage src={getDisplayImage(chat.imageCid, chat.name)} />
@@ -474,6 +492,14 @@ export default function MessagesPage() {
           </div>
         )}
       </div>
+
+      <SubscriptionModal
+        isOpen={showUpgradeModal}
+        onClose={() => {
+          setShowUpgradeModal(false);
+          refreshSubscription();
+        }}
+      />
     </div>
   );
 }

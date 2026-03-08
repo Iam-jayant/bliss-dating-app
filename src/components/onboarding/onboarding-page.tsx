@@ -2,9 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { useWallet } from '@demox-labs/aleo-wallet-adapter-react';
-import { WalletMultiButton } from '@demox-labs/aleo-wallet-adapter-reactui';
-import { DecryptPermission, WalletAdapterNetwork } from '@demox-labs/aleo-wallet-adapter-base';
+import { useWallet } from '@provablehq/aleo-wallet-adaptor-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -22,7 +20,7 @@ interface OnboardingPageProps {
 type Step = 1 | 2 | 3 | 4;
 
 export function OnboardingPage({ onComplete }: OnboardingPageProps) {
-    const { connected, publicKey, connect, wallets, select } = useWallet();
+    const { connected, address: publicKey, executeTransaction } = useWallet();
     const router = useRouter();
 
     // State management
@@ -64,35 +62,6 @@ export function OnboardingPage({ onComplete }: OnboardingPageProps) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [connected, publicKey]);
 
-    const handleConnectWallet = async () => {
-        try {
-            setLoading(true);
-            setError('');
-
-            // Find Leo Wallet
-            const leoWallet = wallets?.find(w => w.adapter.name === 'Leo Wallet');
-            if (!leoWallet) {
-                setError('Leo Wallet not found. Please install Leo Wallet extension.');
-                setLoading(false);
-                return;
-            }
-
-            // IMPORTANT: Must select wallet BEFORE calling connect
-            select(leoWallet.adapter.name as any);
-
-            // Small delay to ensure selection is processed
-            await new Promise(resolve => setTimeout(resolve, 100));
-
-            // Now connect with the selected wallet
-            await connect(DecryptPermission.UponRequest, WalletAdapterNetwork.Testnet);
-
-        } catch (err) {
-            setError('Failed to connect wallet. Please try again.');
-            console.error('Wallet connection error:', err);
-            setLoading(false);
-        }
-    };
-
     const handleAgeVerification = async () => {
         try {
             setLoading(true);
@@ -104,17 +73,15 @@ export function OnboardingPage({ onComplete }: OnboardingPageProps) {
                 return;
             }
 
-            // Get the connected wallet adapter
-            const wallet = wallets?.find(w => w.adapter.name === 'Leo Wallet');
-            if (!wallet) {
-                setError('Leo Wallet not found. Please install Leo Wallet extension.');
+            if (!connected || !walletAddress) {
+                setError('Wallet not connected. Please connect your wallet first.');
                 return;
             }
 
             // Call Aleo contract for age verification
             const result = await aleoService.verifyAge(ageNum, {
                 publicKey: walletAddress,
-                requestTransaction: (wallet.adapter as any).requestTransaction?.bind(wallet.adapter)
+                requestTransaction: executeTransaction
             });
 
             if (!result.success) {
@@ -255,14 +222,14 @@ export function OnboardingPage({ onComplete }: OnboardingPageProps) {
                                 </div>
                                 <h2 className="font-headline text-3xl md:text-4xl italic">Connect Your Aleo Wallet</h2>
                                 <p className="text-muted-foreground max-w-md mx-auto text-lg">
-                                    Connect your Leo Wallet to begin. No email, no passwords.
+                                    Connect your Aleo wallet to begin. No email, no passwords.
                                 </p>
                                 <Button
                                     onClick={() => setShowWalletModal(true)}
                                     size="lg"
                                     className="bg-primary hover:bg-primary/90 text-primary-foreground px-10 py-7 rounded-full font-semibold shadow-lg hover:shadow-xl transition-all hover:scale-105"
                                 >
-                                    Connect Leo Wallet
+                                    Connect Wallet
                                 </Button>
                             </div>
                         )}

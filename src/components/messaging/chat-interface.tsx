@@ -13,7 +13,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { messagingService, type Message } from '@/lib/messaging/messaging-service';
-import { useWallet } from '@demox-labs/aleo-wallet-adapter-react';
+import { useWallet } from '@provablehq/aleo-wallet-adaptor-react';
 
 interface ChatInterfaceProps {
   matchedUserAddress: string;
@@ -26,7 +26,7 @@ export function ChatInterface({
   matchedUserName,
   matchedUserImage,
 }: ChatInterfaceProps) {
-  const { publicKey } = useWallet();
+  const { address: publicKey } = useWallet();
   const [messages, setMessages] = useState<Array<Message & { decryptedContent: string }>>([]);
   const [newMessage, setNewMessage] = useState('');
   const [sending, setSending] = useState(false);

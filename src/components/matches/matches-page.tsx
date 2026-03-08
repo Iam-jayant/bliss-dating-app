@@ -7,8 +7,8 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { useWallet } from '@demox-labs/aleo-wallet-adapter-react';
-import { WalletMultiButton } from '@demox-labs/aleo-wallet-adapter-reactui';
+import { useWallet } from '@provablehq/aleo-wallet-adaptor-react';
+import { WalletMultiButton } from '@provablehq/aleo-wallet-adaptor-react-ui';
 import { useRouter } from 'next/navigation';
 import { getProfile, getProfileByHash, getProfileImageUrl } from '@/lib/storage/profile';
 import { getMutualMatches } from '@/lib/matching/compatibility-service';
@@ -26,7 +26,7 @@ interface Match {
 }
 
 export default function MatchesPage() {
-  const { publicKey } = useWallet();
+  const { address: publicKey } = useWallet();
   const router = useRouter();
   const [matches, setMatches] = useState<Match[]>([]);
   const [loading, setLoading] = useState(true);

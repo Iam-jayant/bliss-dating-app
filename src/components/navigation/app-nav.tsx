@@ -5,7 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Heart, User, LogOut, MessageCircle, Sparkles, Settings, HeartHandshake, Shield } from 'lucide-react';
-import { useWallet } from '@demox-labs/aleo-wallet-adapter-react';
+import { useWallet } from '@provablehq/aleo-wallet-adaptor-react';
 import { cn } from '@/lib/utils';
 
 export function AppNav() {

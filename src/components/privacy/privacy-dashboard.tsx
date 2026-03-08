@@ -12,7 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
-import { useWallet } from '@demox-labs/aleo-wallet-adapter-react';
+import { useWallet } from '@provablehq/aleo-wallet-adaptor-react';
 
 interface DataItem {
   name: string;
@@ -82,7 +82,7 @@ const DATA_INVENTORY: DataItem[] = [
 ];
 
 export function PrivacyDashboard() {
-  const { publicKey } = useWallet();
+  const { address: publicKey } = useWallet();
   const [privacyScore, setPrivacyScore] = useState(95);
   const [onChainRecords, setOnChainRecords] = useState(0);
   const [encryptedRecords, setEncryptedRecords] = useState(0);

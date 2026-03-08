@@ -22,8 +22,8 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
-import { useWallet } from '@demox-labs/aleo-wallet-adapter-react';
-import { WalletMultiButton } from '@demox-labs/aleo-wallet-adapter-reactui';
+import { useWallet } from '@provablehq/aleo-wallet-adaptor-react';
+import { WalletMultiButton } from '@provablehq/aleo-wallet-adaptor-react-ui';
 import { useRouter } from 'next/navigation';
 import { getProfile, exportProfileData } from '@/lib/storage/profile';
 
@@ -69,7 +69,7 @@ function saveSettings(settings: BlissSettings) {
 }
 
 export default function SettingsPage() {
-  const { publicKey, disconnect } = useWallet();
+  const { address: publicKey, disconnect } = useWallet();
   const router = useRouter();
   const [settings, setSettings] = useState<BlissSettings>(DEFAULT_SETTINGS);
   const [walletHash, setWalletHash] = useState('');

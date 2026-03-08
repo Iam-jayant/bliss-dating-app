@@ -1,9 +1,3 @@
-/**
- * "Who Liked You" Grid - Premium Feature
- * Shows users who have liked your profile
- * Blurred for free tier, unlocked for premium
- */
-
 'use client';
 
 import { useState, useEffect } from 'react';
@@ -11,10 +5,12 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Heart, Lock, Sparkles } from 'lucide-react';
-import { useWallet } from '@demox-labs/aleo-wallet-adapter-react';
+import { useWallet } from '@provablehq/aleo-wallet-adaptor-react';
 import { getProfileByHash } from '@/lib/storage/profile';
 import { getLikesReceived } from '@/lib/matching/compatibility-service';
 import type { ProfileData } from '@/lib/storage/types';
+import { useSubscription } from '@/hooks/use-subscription';
+import { SubscriptionModal } from '@/components/subscription/subscription-modal';
 import Image from 'next/image';
 
 interface LikeWithProfile {
@@ -24,15 +20,14 @@ interface LikeWithProfile {
 }
 
 export function LikesGrid() {
-  const { publicKey } = useWallet();
+  const { address: publicKey } = useWallet();
+  const { canSeeLikes, refresh } = useSubscription();
   const [likes, setLikes] = useState<LikeWithProfile[]>([]);
   const [loading, setLoading] = useState(true);
-  const [isPremium, setIsPremium] = useState(false);
   const [showUpgrade, setShowUpgrade] = useState(false);
 
   useEffect(() => {
     loadLikes();
-    checkPremiumStatus();
   }, [publicKey]);
 
   const loadLikes = async () => {
@@ -41,7 +36,6 @@ export function LikesGrid() {
     try {
       const receivedLikes = await getLikesReceived(publicKey);
       
-      // Load profiles for each like
       const likesWithProfiles = await Promise.all(
         receivedLikes.map(async (like) => {
           const profile = await getProfileByHash(like.from);
@@ -61,15 +55,6 @@ export function LikesGrid() {
     }
   };
 
-  const checkPremiumStatus = () => {
-    // Check subscription status from localStorage or on-chain
-    const subscription = localStorage.getItem('bliss_subscription');
-    if (subscription) {
-      const sub = JSON.parse(subscription);
-      setIsPremium(sub.tier === 'premium' || sub.tier === 'plus');
-    }
-  };
-
   if (loading) {
     return (
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
@@ -86,7 +71,7 @@ export function LikesGrid() {
         <Heart className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
         <h3 className="text-lg font-semibold mb-2">No likes yet</h3>
         <p className="text-sm text-muted-foreground">
-          Keep swiping! When someone likes you, they'll appear here.
+          Keep swiping! When someone likes you, they&apos;ll appear here.
         </p>
       </Card>
     );
@@ -101,7 +86,7 @@ export function LikesGrid() {
             {likes.length} {likes.length === 1 ? 'person has' : 'people have'} liked your profile
           </p>
         </div>
-        {!isPremium && (
+        {!canSeeLikes && (
           <Button onClick={() => setShowUpgrade(true)} className="gap-2">
             <Sparkles className="h-4 w-4" />
             Upgrade to See
@@ -110,27 +95,25 @@ export function LikesGrid() {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-        {likes.map((like, index) => (
+        {likes.map((like) => (
           <Card
             key={like.walletHash}
             className="relative aspect-[3/4] overflow-hidden group cursor-pointer hover:shadow-lg transition-shadow"
           >
-            {/* Profile Image */}
             <div className="absolute inset-0">
               {like.profile?.profile_image_path ? (
                 <Image
                   src={like.profile.profile_image_path}
                   alt={like.profile.name || 'User'}
                   fill
-                  className={`object-cover ${!isPremium ? 'blur-lg' : ''}`}
+                  className={`object-cover ${!canSeeLikes ? 'blur-lg' : ''}`}
                 />
               ) : (
                 <div className="w-full h-full bg-gradient-to-br from-purple-400 to-pink-400" />
               )}
             </div>
 
-            {/* Overlay for free tier */}
-            {!isPremium && (
+            {!canSeeLikes && (
               <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
                 <div className="text-center px-4">
                   <Lock className="h-8 w-8 text-white mx-auto mb-2" />
@@ -141,8 +124,7 @@ export function LikesGrid() {
               </div>
             )}
 
-            {/* Profile Info (visible for premium) */}
-            {isPremium && like.profile && (
+            {canSeeLikes && like.profile && (
               <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4">
                 <h3 className="text-white font-semibold text-lg">
                   {like.profile.name}
@@ -164,42 +146,13 @@ export function LikesGrid() {
         ))}
       </div>
 
-      {/* Upgrade Modal would go here */}
-      {showUpgrade && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <Card className="max-w-md w-full p-6 space-y-4">
-            <div className="text-center">
-              <Sparkles className="h-12 w-12 text-primary mx-auto mb-4" />
-              <h3 className="text-xl font-bold mb-2">See Who Likes You</h3>
-              <p className="text-sm text-muted-foreground mb-4">
-                Upgrade to Premium to see all {likes.length} people who liked your profile
-              </p>
-            </div>
-            <div className="space-y-2">
-              <div className="flex items-center gap-3 text-sm">
-                <div className="h-1.5 w-1.5 rounded-full bg-primary" />
-                <span>See everyone who likes you</span>
-              </div>
-              <div className="flex items-center gap-3 text-sm">
-                <div className="h-1.5 w-1.5 rounded-full bg-primary" />
-                <span>Unlimited swipes</span>
-              </div>
-              <div className="flex items-center gap-3 text-sm">
-                <div className="h-1.5 w-1.5 rounded-full bg-primary" />
-                <span>Advanced filters</span>
-              </div>
-            </div>
-            <div className="flex gap-3">
-              <Button variant="outline" onClick={() => setShowUpgrade(false)} className="flex-1">
-                Maybe Later
-              </Button>
-              <Button onClick={() => {/* Navigate to subscription */}} className="flex-1">
-                Upgrade Now
-              </Button>
-            </div>
-          </Card>
-        </div>
-      )}
+      <SubscriptionModal
+        isOpen={showUpgrade}
+        onClose={() => {
+          setShowUpgrade(false);
+          refresh();
+        }}
+      />
     </div>
   );
 }

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { useWallet } from '@demox-labs/aleo-wallet-adapter-react';
+import { useWallet } from '@provablehq/aleo-wallet-adaptor-react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -28,7 +28,7 @@ function getDisplayImage(imagePath: string | undefined, name: string): string {
 }
 
 export function ProfilePage() {
-  const { connected, publicKey, disconnect } = useWallet();
+  const { connected, address: publicKey, disconnect } = useWallet();
   const router = useRouter();
   
   const [profile, setProfile] = useState<ProfileData | null>(null);

@@ -8,8 +8,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence, PanInfo } from 'framer-motion';
 import { Heart, X, Star, RotateCcw, ChevronDown, ChevronUp, SlidersHorizontal, Flag } from 'lucide-react';
-import { useWallet } from '@demox-labs/aleo-wallet-adapter-react';
-import { WalletMultiButton } from '@demox-labs/aleo-wallet-adapter-reactui';
+import { useWallet } from '@provablehq/aleo-wallet-adaptor-react';
+import { WalletMultiButton } from '@provablehq/aleo-wallet-adaptor-react-ui';
 import { getAllProfiles, getProfile, getProfileByHash, getProfileImageUrl } from '@/lib/storage/profile';
 import type { ProfileData } from '@/lib/storage/types';
 import { seedDemoData } from '@/lib/seed-profiles';
@@ -20,9 +20,12 @@ import {
   checkMutualMatch,
   hasActedOn
 } from '@/lib/matching/compatibility-service';
+import { useSubscription } from '@/hooks/use-subscription';
+import { incrementDailySwipes, decrementDailySwipes, incrementDailySuperLikes } from '@/lib/payment/payment-service';
 import { MatchModal } from './match-modal';
 import { DiscoveryFilters, type FilterState } from './discovery-filters';
 import { ReportModal } from '@/components/safety/report-modal';
+import { SubscriptionModal } from '@/components/subscription/subscription-modal';
 import Image from 'next/image';
 
 interface DiscoveryProfile {
@@ -61,12 +64,11 @@ function formatIntent(intent: string): string {
 }
 
 export default function DiscoveryPage() {
-  const { publicKey } = useWallet();
+  const { address: publicKey } = useWallet();
+  const { canSwipe, canSuperLike, remainingSwipes, remainingSuperLikes, tier, refresh: refreshSubscription } = useSubscription();
   const [profiles, setProfiles] = useState<DiscoveryProfile[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [dailySwipesUsed, setDailySwipesUsed] = useState(0);
-  const [swipeLimit, setSwipeLimit] = useState(10);
   const [showMatchModal, setShowMatchModal] = useState(false);
   const [matchedProfile, setMatchedProfile] = useState<DiscoveryProfile | null>(null);
   const [currentUserProfile, setCurrentUserProfile] = useState<ProfileData | null>(null);
@@ -79,13 +81,11 @@ export default function DiscoveryPage() {
   });
   const [showReport, setShowReport] = useState(false);
   const [swipeHistory, setSwipeHistory] = useState<string[]>([]);
-  const [superLikesUsed, setSuperLikesUsed] = useState(0);
-  const [isPremium, setIsPremium] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
   const [swipeIndicator, setSwipeIndicator] = useState<'like' | 'nope' | null>(null);
+  const [showSubscriptionModal, setShowSubscriptionModal] = useState(false);
 
   const currentProfile = profiles[currentIndex];
-  const canSwipe = swipeLimit === -1 || dailySwipesUsed < swipeLimit;
 
   const loadCurrentUserProfile = useCallback(async () => {
     if (publicKey) {
@@ -185,50 +185,10 @@ export default function DiscoveryPage() {
     }
   }, [publicKey, filters]);
 
-  const loadUserLimits = useCallback(async () => {
-    if (!publicKey) {
-      setSwipeLimit(10);
-      setDailySwipesUsed(0);
-      return;
-    }
-    try {
-      const cached = localStorage.getItem(`bliss_sub_${publicKey}`);
-      if (cached) {
-        const data = JSON.parse(cached);
-        if (data.expiresAt > Date.now()) {
-          setSwipeLimit(-1);
-          setDailySwipesUsed(0);
-          return;
-        }
-      }
-      setSwipeLimit(10);
-      const today = new Date().toISOString().split('T')[0];
-      const usageKey = `bliss_swipes_${publicKey}_${today}`;
-      const used = parseInt(localStorage.getItem(usageKey) || '0', 10);
-      setDailySwipesUsed(used);
-    } catch (error) {
-      console.error('Failed to load user limits:', error);
-      setSwipeLimit(10);
-      setDailySwipesUsed(0);
-    }
-  }, [publicKey]);
-
   useEffect(() => {
     loadProfiles();
-    loadUserLimits();
     loadCurrentUserProfile();
-  }, [loadProfiles, loadUserLimits, loadCurrentUserProfile]);
-
-  useEffect(() => {
-    const checkPremium = () => {
-      const sub = localStorage.getItem('bliss_subscription');
-      if (sub) {
-        const subscription = JSON.parse(sub);
-        setIsPremium(subscription.tier === 'premium' || subscription.tier === 'plus');
-      }
-    };
-    checkPremium();
-  }, []);
+  }, [loadProfiles, loadCurrentUserProfile]);
 
   // ─── SWIPE HANDLERS ────────────────────────────────────────────
 
@@ -240,13 +200,8 @@ export default function DiscoveryPage() {
     if (!canSwipe || !currentProfile) return;
 
     setExitDirection(direction);
-    setDailySwipesUsed(prev => prev + 1);
-
-    // Persist swipe count
-    const today = new Date().toISOString().split('T')[0];
-    const usageKey = `bliss_swipes_${publicKey}_${today}`;
-    const currentUsed = parseInt(localStorage.getItem(usageKey) || '0', 10);
-    localStorage.setItem(usageKey, String(currentUsed + 1));
+    incrementDailySwipes(publicKey);
+    refreshSubscription();
 
     // Track in history
     setSwipeHistory(prev => [...prev, currentProfile.walletAddress].slice(-5));
@@ -328,7 +283,6 @@ export default function DiscoveryPage() {
     const lastUserHash = swipeHistory[swipeHistory.length - 1];
     setSwipeHistory(prev => prev.slice(0, -1));
     
-    // Remove from likes/passes storage
     const likes = JSON.parse(localStorage.getItem('bliss_likes_v2') || '[]');
     const passes = JSON.parse(localStorage.getItem('bliss_passes_v2') || '[]');
     
@@ -338,18 +292,11 @@ export default function DiscoveryPage() {
     localStorage.setItem('bliss_likes_v2', JSON.stringify(filteredLikes));
     localStorage.setItem('bliss_passes_v2', JSON.stringify(filteredPasses));
     
-    // Decrease swipe count
-    if (dailySwipesUsed > 0) {
-      setDailySwipesUsed(prev => prev - 1);
-      const today = new Date().toISOString().split('T')[0];
-      const usageKey = `bliss_swipes_${publicKey}_${today}`;
-      const currentUsed = parseInt(localStorage.getItem(usageKey) || '0', 10);
-      if (currentUsed > 0) {
-        localStorage.setItem(usageKey, String(currentUsed - 1));
-      }
+    if (publicKey) {
+      decrementDailySwipes(publicKey);
+      refreshSubscription();
     }
     
-    // Move back one profile
     if (currentIndex > 0) {
       setCurrentIndex(prev => prev - 1);
     }
@@ -357,31 +304,22 @@ export default function DiscoveryPage() {
 
   const handleSuperLike = async () => {
     if (!currentProfile || !publicKey) return;
-    if (!canSwipe) return;
+    if (!canSwipe || !canSuperLike) return;
     
     setExitDirection('right');
-    setDailySwipesUsed(prev => prev + 1);
-    setSuperLikesUsed(prev => prev + 1);
+    incrementDailySwipes(publicKey);
+    incrementDailySuperLikes(publicKey);
+    refreshSubscription();
     
-    // Persist swipe count
-    const today = new Date().toISOString().split('T')[0];
-    const usageKey = `bliss_swipes_${publicKey}_${today}`;
-    const currentUsed = parseInt(localStorage.getItem(usageKey) || '0', 10);
-    localStorage.setItem(usageKey, String(currentUsed + 1));
-    
-    // Track in history
     setSwipeHistory(prev => [...prev, currentProfile.walletAddress].slice(-5));
     
-    // Track as super like
     try {
       const myProfile = await getProfile(publicKey);
       const targetProfile = await getProfileByHash(currentProfile.walletAddress);
       
       if (myProfile && targetProfile) {
         recordLike(myProfile.wallet_hash, currentProfile.walletAddress, true);
-        console.log('⭐ Super Liked:', targetProfile.name);
-        
-        // Check for mutual match
+
         const isMutualMatch = checkMutualMatch(
           myProfile.wallet_hash,
           currentProfile.walletAddress,
@@ -442,11 +380,11 @@ export default function DiscoveryPage() {
           <div className="text-5xl mb-5">✨</div>
           <h2 className="text-2xl font-headline italic text-foreground mb-2">You&apos;re out of likes</h2>
           <p className="text-muted-foreground text-sm leading-relaxed mb-8">
-            You&apos;ve used all {swipeLimit} likes for today. Come back tomorrow or go unlimited.
+            You&apos;ve used all {tier.limits.dailySwipes} likes for today. Come back tomorrow or go unlimited.
           </p>
           <button
             className="w-full py-3.5 rounded-full bg-gradient-to-r from-pink-500 to-rose-500 text-white font-semibold text-sm tracking-wide hover:shadow-lg hover:shadow-pink-500/25 transition-all"
-            onClick={() => window.location.href = '/subscription'}
+            onClick={() => setShowSubscriptionModal(true)}
           >
             Get Unlimited
           </button>
@@ -454,6 +392,11 @@ export default function DiscoveryPage() {
             Resets in {24 - new Date().getHours()} hours
           </p>
         </motion.div>
+        <SubscriptionModal
+          isOpen={showSubscriptionModal}
+          onClose={() => setShowSubscriptionModal(false)}
+          onSuccess={refreshSubscription}
+        />
       </div>
     );
   }
@@ -735,7 +678,7 @@ export default function DiscoveryPage() {
         <motion.button
           whileTap={{ scale: 0.85 }}
           onClick={handleSuperLike}
-          disabled={!publicKey || !canSwipe || superLikesUsed >= (isPremium ? 999 : 1)}
+          disabled={!publicKey || !canSwipe || !canSuperLike}
           className="w-14 h-14 rounded-full bg-white dark:bg-gray-800 shadow-lg flex items-center justify-center hover:bg-gray-50 dark:hover:bg-gray-700 transition-all disabled:opacity-30 disabled:pointer-events-none"
         >
           <Star className="w-5 h-5 text-gray-900 dark:text-white fill-gray-900 dark:fill-white" strokeWidth={2.5} />

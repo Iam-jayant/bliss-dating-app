@@ -1,8 +1,9 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { Check, Sparkles } from 'lucide-react';
+import { Check, Sparkles, Clock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 
 const pricingTiers = [
   {
@@ -11,49 +12,51 @@ const pricingTiers = [
     period: 'forever',
     description: 'Perfect for casual browsing',
     features: [
-      'Create profile & browse',
-      'Limited swipes per day',
+      '10 swipes per day',
+      'Up to 3 active chats',
       'Age verification',
       'Basic matching',
       'End-to-end encryption'
     ],
     cta: 'Start Free',
-    highlighted: false
-  },
-  {
-    name: 'Pay-as-you-go',
-    price: '$0.10',
-    period: 'per match',
-    description: 'Only pay when you connect',
-    features: [
-      'Unlimited browsing',
-      'Pay only for matches',
-      'Advanced compatibility',
-      'Priority support',
-      'No monthly commitment',
-      'Full privacy features'
-    ],
-    cta: 'Start Matching',
-    highlighted: true,
-    badge: 'Most Flexible'
+    highlighted: false,
+    badge: null,
   },
   {
     name: 'Premium',
-    price: '$12',
-    period: 'per month',
-    description: 'For serious daters',
+    price: '10',
+    period: 'Aleo credits',
+    priceSuffix: '≈ $9.99',
+    description: 'Unlock the full experience',
     features: [
-      'Unlimited everything',
+      'Unlimited swipes',
+      'Unlimited chats',
       'See who liked you',
+      '5 Super Likes per day',
       'Advanced filters',
-      'Rewind swipes',
+    ],
+    cta: 'Get Premium',
+    highlighted: true,
+    badge: 'Most Popular',
+  },
+  {
+    name: 'Plus',
+    price: '20',
+    period: 'Aleo credits',
+    priceSuffix: '≈ $19.99',
+    description: 'Everything, no limits',
+    features: [
+      'All Premium features',
+      'Unlimited Super Likes',
       'Profile boost',
       'Read receipts',
-      'Priority matching'
+      'VIP badge',
+      'Priority matching',
     ],
-    cta: 'Go Premium',
-    highlighted: false
-  }
+    cta: 'Go Plus',
+    highlighted: false,
+    badge: 'Best Value',
+  },
 ];
 
 export function PricingSection() {
@@ -61,7 +64,6 @@ export function PricingSection() {
     <section className="py-16 md:py-24 bg-background">
       <div className="container mx-auto px-6 md:px-10 lg:px-16">
         
-        {/* Section header */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
@@ -73,11 +75,10 @@ export function PricingSection() {
             Pricing that <span className="text-primary">makes sense</span>
           </h2>
           <p className="text-xl text-muted-foreground">
-            No hidden fees. No forced subscriptions. Pay for value, not engagement.
+            One-time purchases. No subscriptions. No hidden fees.
           </p>
         </motion.div>
 
-        {/* Pricing cards */}
         <div className="grid md:grid-cols-3 gap-8 max-w-6xl mx-auto">
           {pricingTiers.map((tier, index) => (
             <motion.div
@@ -104,7 +105,6 @@ export function PricingSection() {
                     : 'border-border bg-card hover:border-primary/50 hover:shadow-lg'
                 }`}
               >
-                {/* Tier name */}
                 <div className="mb-4">
                   <h3 className="text-2xl font-headline italic text-foreground mb-2">
                     {tier.name}
@@ -112,15 +112,16 @@ export function PricingSection() {
                   <p className="text-sm text-muted-foreground">{tier.description}</p>
                 </div>
 
-                {/* Price */}
                 <div className="mb-6">
                   <div className="flex items-baseline gap-1">
                     <span className="text-5xl font-bold text-primary">{tier.price}</span>
                     <span className="text-muted-foreground">/{tier.period}</span>
                   </div>
+                  {'priceSuffix' in tier && tier.priceSuffix && (
+                    <p className="text-sm text-muted-foreground mt-1">{tier.priceSuffix}</p>
+                  )}
                 </div>
 
-                {/* Features */}
                 <ul className="space-y-3 mb-8">
                   {tier.features.map((feature) => (
                     <li key={feature} className="flex items-start gap-3">
@@ -130,7 +131,6 @@ export function PricingSection() {
                   ))}
                 </ul>
 
-                {/* CTA */}
                 <Button
                   className={`w-full rounded-full text-base py-6 ${
                     tier.highlighted
@@ -145,16 +145,52 @@ export function PricingSection() {
           ))}
         </div>
 
-        {/* Bottom note */}
+        {/* Pay As You Go — x402 Coming Soon */}
+        <motion.div
+          initial={{ opacity: 0, y: 30 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          transition={{ duration: 0.5, delay: 0.4 }}
+          className="max-w-2xl mx-auto mt-12"
+        >
+          <div className="relative rounded-2xl border-2 border-dashed border-border bg-card/50 p-8">
+            <div className="absolute -top-4 left-1/2 -translate-x-1/2 z-10">
+              <Badge variant="secondary" className="text-sm font-semibold px-4 py-1 rounded-full shadow-lg flex items-center gap-1">
+                <Clock className="w-3 h-3" />
+                Coming Soon
+              </Badge>
+            </div>
+
+            <div className="text-center mb-6">
+              <h3 className="text-2xl font-headline italic text-foreground mb-2">Pay As You Go</h3>
+              <p className="text-sm text-muted-foreground">Micro-payments via x402 — pay only for what you use</p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              {[
+                { name: 'Super Like', price: '$0.25' },
+                { name: 'Profile Reveal', price: '$0.10' },
+                { name: 'Undo Swipe', price: '$0.05' },
+                { name: '24h Boost', price: '$1.99' },
+              ].map((item) => (
+                <div key={item.name} className="flex items-center justify-between bg-background/50 rounded-lg px-4 py-3">
+                  <span className="text-foreground text-sm">{item.name}</span>
+                  <span className="text-primary font-semibold text-sm">{item.price}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </motion.div>
+
         <motion.div
           initial={{ opacity: 0 }}
           whileInView={{ opacity: 1 }}
           viewport={{ once: true }}
-          transition={{ duration: 0.6, delay: 0.4 }}
+          transition={{ duration: 0.6, delay: 0.5 }}
           className="text-center mt-12"
         >
           <p className="text-muted-foreground">
-            All plans include full privacy protection • Cancel anytime • No questions asked
+            All plans include full privacy protection • Powered by Aleo blockchain
           </p>
         </motion.div>
       </div>
