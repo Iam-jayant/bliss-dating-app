@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { useWallet } from '@demox-labs/aleo-wallet-adapter-react';
+import { useWallet } from '@provablehq/aleo-wallet-adaptor-react';
 import { getProfile } from '@/lib/storage/profile';
 import type { VerificationRecord } from '@/lib/aleo/types';
 
@@ -20,7 +20,7 @@ const STORAGE_KEY = 'bliss-session';
  * Hook for managing Bliss app session state
  */
 export function useBlissSession() {
-  const { connected, publicKey, disconnect } = useWallet();
+  const { connected, address: publicKey, disconnect } = useWallet();
   
   const [session, setSession] = useState<BlissSession>({
     isConnected: false,

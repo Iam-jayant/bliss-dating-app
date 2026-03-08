@@ -3,10 +3,6 @@
  * Extends the base AleoService with Wave 2 contract interactions
  */
 
-import {
-  Transaction,
-  WalletAdapterNetwork,
-} from '@demox-labs/aleo-wallet-adapter-base';
 import { ALEO_CONFIG } from './config';
 
 const PROFILE_PROGRAM = process.env.NEXT_PUBLIC_PROFILE_VERIFICATION_PROGRAM || 'bliss_profile_verification.aleo';
@@ -138,18 +134,15 @@ export class AleoProfileService {
       `${interestsBitfield}u8`,
     ];
 
-    const aleoTransaction = Transaction.createTransaction(
-      walletAdapter.publicKey,
-      WalletAdapterNetwork.TestnetBeta,
-      MATCHING_PROGRAM,
-      'record_action',
+    const txOptions = {
+      program: MATCHING_PROGRAM,
+      function: 'record_action',
       inputs,
-      ALEO_CONFIG.FEE_MICROCREDITS,
-      false
-    );
+      fee: ALEO_CONFIG.FEE_MICROCREDITS,
+      privateFee: false,
+    };
 
-    const plainTransaction = JSON.parse(JSON.stringify(aleoTransaction));
-    return await walletAdapter.requestTransaction(plainTransaction);
+    return await walletAdapter.requestTransaction(txOptions);
   }
 
   /**
@@ -183,17 +176,13 @@ export class AleoProfileService {
       `${currentTime}u32`,
     ];
 
-    const aleoTransaction = Transaction.createTransaction(
-      walletPublicKey,
-      WalletAdapterNetwork.TestnetBeta,
-      SUBSCRIPTION_PROGRAM,
-      functionName,
+    return {
+      program: SUBSCRIPTION_PROGRAM,
+      function: functionName,
       inputs,
-      ALEO_CONFIG.FEE_MICROCREDITS,
-      false
-    );
-
-    return JSON.parse(JSON.stringify(aleoTransaction));
+      fee: ALEO_CONFIG.FEE_MICROCREDITS,
+      privateFee: false,
+    };
   }
 
   // --- Local storage helpers for MVP demo ---

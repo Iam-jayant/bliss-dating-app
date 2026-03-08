@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useWallet } from '@demox-labs/aleo-wallet-adapter-react';
+import { useWallet } from '@provablehq/aleo-wallet-adaptor-react';
 import { useRouter, usePathname } from 'next/navigation';
 import { getProfile } from '@/lib/storage/profile';
 
@@ -14,7 +14,7 @@ import { getProfile } from '@/lib/storage/profile';
  * Runs on all pages except target pages to prevent loops
  */
 export function ProfileRedirect() {
-  const { connected, publicKey } = useWallet();
+  const { connected, address: publicKey } = useWallet();
   const router = useRouter();
   const pathname = usePathname();
   const [isChecking, setIsChecking] = useState(false);
