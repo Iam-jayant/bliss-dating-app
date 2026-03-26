@@ -5,14 +5,13 @@
 
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence, PanInfo } from 'framer-motion';
 import { Heart, X, Star, RotateCcw, ChevronDown, ChevronUp, SlidersHorizontal, Flag } from 'lucide-react';
 import { useWallet } from '@provablehq/aleo-wallet-adaptor-react';
 import { WalletMultiButton } from '@provablehq/aleo-wallet-adaptor-react-ui';
 import { getAllProfiles, getProfile, getProfileByHash, getProfileImageUrl } from '@/lib/storage/profile';
 import type { ProfileData } from '@/lib/storage/types';
-import { seedDemoData } from '@/lib/seed-profiles';
 import {
   calculateEnhancedCompatibility,
   recordLike,
@@ -21,12 +20,23 @@ import {
   hasActedOn
 } from '@/lib/matching/compatibility-service';
 import { useSubscription } from '@/hooks/use-subscription';
-import { incrementDailySwipes, decrementDailySwipes, incrementDailySuperLikes } from '@/lib/payment/payment-service';
+import {
+  decrementDailySwipes,
+  flushPendingSwipeSettlements,
+  getPendingSwipeSettlementCount,
+  incrementDailySwipes,
+  incrementDailySuperLikes,
+  popLastPendingSwipeSettlement,
+  queuePendingSwipeSettlement,
+  recordSwipeOnChain,
+} from '@/lib/payment/payment-service';
 import { MatchModal } from './match-modal';
 import { DiscoveryFilters, type FilterState } from './discovery-filters';
 import { ReportModal } from '@/components/safety/report-modal';
 import { SubscriptionModal } from '@/components/subscription/subscription-modal';
+import { BLISS_V3_KEYS } from '@/lib/storage/schema';
 import Image from 'next/image';
+import { aleoProfileService } from '@/lib/aleo/profile-service';
 
 interface DiscoveryProfile {
   walletAddress: string;
@@ -41,10 +51,25 @@ interface DiscoveryProfile {
 }
 
 const SWIPE_THRESHOLD = 100;
+const SWIPE_SETTLEMENT_MODE = process.env.NEXT_PUBLIC_SWIPE_SETTLEMENT_MODE || 'deferred';
+const PENDING_SWIPE_SETTLEMENT_THRESHOLD = Number(process.env.NEXT_PUBLIC_SWIPE_SETTLEMENT_THRESHOLD || 5);
+const PENDING_SWIPE_SETTLEMENT_RETRY_MS = 30_000;
+const ACTION_RECEIPT_MODE = process.env.NEXT_PUBLIC_SWIPE_RECEIPT_MODE || 'deferred';
+const PENDING_ACTION_RECEIPTS_KEY = 'bliss_v3_pending_action_receipts';
+const DEFERRED_SETTLEMENT_THRESHOLD = Number(process.env.NEXT_PUBLIC_SWIPE_SETTLEMENT_THRESHOLD || 10);
+const DEFERRED_SETTLEMENT_RETRY_MS = 30_000;
+
+interface PendingActionReceipt {
+  targetWalletAddress: string;
+  actionType: 'pass' | 'like' | 'superlike';
+  createdAt: number;
+  attempts?: number;
+  lastAttemptAt?: number;
+}
 
 /** Resolve any image source to a displayable URL */
 function getDisplayImageUrl(imageCid: string, profileName: string): string {
-  if (!imageCid || imageCid.startsWith('mock_image_')) {
+  if (!imageCid) {
     return `https://api.dicebear.com/9.x/notionists/svg?seed=${encodeURIComponent(profileName)}&backgroundColor=c0aede`;
   }
   if (imageCid.startsWith('local:') || imageCid.startsWith('data:')) return imageCid.startsWith('data:') ? imageCid : getProfileImageUrl(imageCid);
@@ -63,9 +88,33 @@ function formatIntent(intent: string): string {
   return map[intent] || intent;
 }
 
+function loadDeferredActionReceipts(): PendingActionReceipt[] {
+  if (typeof window === 'undefined') return [];
+  const raw = localStorage.getItem(PENDING_ACTION_RECEIPTS_KEY);
+  return raw ? JSON.parse(raw) : [];
+}
+
+function saveDeferredActionReceipts(receipts: PendingActionReceipt[]): void {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(PENDING_ACTION_RECEIPTS_KEY, JSON.stringify(receipts));
+}
+
+function queueDeferredActionReceipt(receipt: PendingActionReceipt): number {
+  if (typeof window === 'undefined') return 0;
+  const current = loadDeferredActionReceipts();
+  current.push(receipt);
+  saveDeferredActionReceipts(current);
+  return current.length;
+}
+
 export default function DiscoveryPage() {
-  const { address: publicKey } = useWallet();
-  const { canSwipe, canSuperLike, remainingSwipes, remainingSuperLikes, tier, refresh: refreshSubscription } = useSubscription();
+  const {
+    address: publicKey,
+    executeTransaction,
+    transactionStatus,
+    requestRecords,
+  } = useWallet();
+  const { canSwipe, canSuperLike, tier, refresh: refreshSubscription } = useSubscription();
   const [profiles, setProfiles] = useState<DiscoveryProfile[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -84,8 +133,147 @@ export default function DiscoveryPage() {
   const [showInfo, setShowInfo] = useState(false);
   const [swipeIndicator, setSwipeIndicator] = useState<'like' | 'nope' | null>(null);
   const [showSubscriptionModal, setShowSubscriptionModal] = useState(false);
+  const flushInProgressRef = useRef(false);
+  const swipeFlushInProgressRef = useRef(false);
 
   const currentProfile = profiles[currentIndex];
+
+  const flushDeferredSwipeSettlements = useCallback(async (maxItems = 1) => {
+    if (SWIPE_SETTLEMENT_MODE !== 'deferred' || !publicKey) return;
+    if (swipeFlushInProgressRef.current) return;
+    if (!executeTransaction || !transactionStatus || !requestRecords) return;
+    if (getPendingSwipeSettlementCount(publicKey) === 0) return;
+
+    swipeFlushInProgressRef.current = true;
+    try {
+      await flushPendingSwipeSettlements(
+        publicKey,
+        async (opts) => {
+          const result = await executeTransaction(opts);
+          if (!result?.transactionId) {
+            throw new Error('Swipe settlement transaction was rejected by the wallet.');
+          }
+          return { transactionId: result.transactionId };
+        },
+        async (transactionId) => {
+          const status = await transactionStatus(transactionId);
+          return {
+            status: String(status.status || 'pending'),
+            transactionId: status.transactionId || transactionId,
+          };
+        },
+        async (programId) => {
+          const records = await requestRecords(programId);
+          return records as Array<{
+            owner?: string;
+            data: Record<string, string>;
+            plaintext: string;
+            programId?: string;
+          }>;
+        },
+        {
+          maxItems,
+          minRetryIntervalMs: PENDING_SWIPE_SETTLEMENT_RETRY_MS,
+        },
+      );
+      await refreshSubscription();
+    } catch {
+      // Queue is preserved for later retries.
+    } finally {
+      swipeFlushInProgressRef.current = false;
+    }
+  }, [executeTransaction, publicKey, refreshSubscription, requestRecords, transactionStatus]);
+
+  const consumeSwipeEntitlement = useCallback(async (): Promise<boolean> => {
+    if (!publicKey) return false;
+
+    if (SWIPE_SETTLEMENT_MODE === 'deferred') {
+      incrementDailySwipes(publicKey);
+      queuePendingSwipeSettlement(publicKey);
+      const pending = getPendingSwipeSettlementCount(publicKey);
+      if (pending >= PENDING_SWIPE_SETTLEMENT_THRESHOLD) {
+        void flushDeferredSwipeSettlements(1);
+      }
+      await refreshSubscription();
+      return true;
+    }
+
+    if (!executeTransaction || !transactionStatus || !requestRecords) {
+      // If adapter capabilities are unavailable, block swipes to avoid client-only bypass.
+      setShowSubscriptionModal(true);
+      return false;
+    }
+
+    try {
+      await recordSwipeOnChain(
+        publicKey,
+        async (opts) => {
+          const result = await executeTransaction(opts);
+          if (!result?.transactionId) {
+            throw new Error('Swipe entitlement transaction was rejected by the wallet.');
+          }
+          return { transactionId: result.transactionId };
+        },
+        async (transactionId) => {
+          const status = await transactionStatus(transactionId);
+          return {
+            status: String(status.status || 'pending'),
+            transactionId: status.transactionId || transactionId,
+          };
+        },
+        async (programId) => {
+          const records = await requestRecords(programId);
+          return records as Array<{
+            owner?: string;
+            data: Record<string, string>;
+            plaintext: string;
+            programId?: string;
+          }>;
+        },
+      );
+      await refreshSubscription();
+      return true;
+    } catch (error) {
+      console.warn('On-chain swipe entitlement failed:', error);
+      await refreshSubscription();
+      setShowSubscriptionModal(true);
+      return false;
+    }
+  }, [executeTransaction, flushDeferredSwipeSettlements, publicKey, refreshSubscription, requestRecords, transactionStatus]);
+
+  const recordActionReceipt = useCallback(async (
+    targetWalletAddress: string,
+    actionType: 'pass' | 'like' | 'superlike',
+  ): Promise<string | undefined> => {
+    if (!publicKey || !executeTransaction) return undefined;
+    const requestTransaction = async (opts: {
+      program: string;
+      function: string;
+      inputs: string[];
+      fee: number;
+      privateFee: boolean;
+    }) => {
+      const result = await executeTransaction(opts);
+      if (!result?.transactionId) {
+        throw new Error('Wallet transaction was rejected.');
+      }
+      return { transactionId: result.transactionId };
+    };
+
+    return aleoProfileService.recordAction(
+      {
+        publicKey,
+        requestTransaction,
+        requestRecords: async (programId: string) => {
+          if (!requestRecords) return [];
+          const records = await requestRecords(programId);
+          return records as Array<{ plaintext: string; data?: Record<string, string> }>;
+        },
+      },
+      targetWalletAddress,
+      actionType,
+    );
+  }, [executeTransaction, publicKey, requestRecords]);
 
   const loadCurrentUserProfile = useCallback(async () => {
     if (publicKey) {
@@ -94,16 +282,47 @@ export default function DiscoveryPage() {
     }
   }, [publicKey]);
 
+  const flushDeferredActionReceipts = useCallback(async (maxItems = 1) => {
+    if (ACTION_RECEIPT_MODE === 'immediate' || !publicKey) return;
+    if (flushInProgressRef.current) return;
+
+    const queue = loadDeferredActionReceipts();
+    if (!queue.length) return;
+
+    flushInProgressRef.current = true;
+    try {
+      const now = Date.now();
+      const processing = queue.slice(0, maxItems);
+      const untouched = queue.slice(maxItems);
+      const retryItems: PendingActionReceipt[] = [];
+
+      for (const item of processing) {
+        if (item.lastAttemptAt && now - item.lastAttemptAt < DEFERRED_SETTLEMENT_RETRY_MS) {
+          retryItems.push(item);
+          continue;
+        }
+
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          await recordActionReceipt(item.targetWalletAddress, item.actionType);
+        } catch {
+          retryItems.push({
+            ...item,
+            attempts: (item.attempts || 0) + 1,
+            lastAttemptAt: now,
+          });
+        }
+      }
+
+      saveDeferredActionReceipts([...retryItems, ...untouched]);
+    } finally {
+      flushInProgressRef.current = false;
+    }
+  }, [publicKey, recordActionReceipt]);
+
   const loadProfiles = useCallback(async () => {
     try {
       setLoading(true);
-
-      // Seed demo profiles on first visit (idempotent)
-      if (currentUserProfile?.wallet_hash) {
-        seedDemoData(currentUserProfile.wallet_hash);
-      } else {
-        seedDemoData();
-      }
       
       const localProfiles = await getAllProfiles();
       
@@ -190,6 +409,60 @@ export default function DiscoveryPage() {
     loadCurrentUserProfile();
   }, [loadProfiles, loadCurrentUserProfile]);
 
+  useEffect(() => {
+    if (ACTION_RECEIPT_MODE === 'immediate') return;
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        void flushDeferredActionReceipts(1);
+      }
+    };
+
+    const onBeforeUnload = () => {
+      void flushDeferredActionReceipts(1);
+    };
+
+    const intervalId = window.setInterval(() => {
+      void flushDeferredActionReceipts(1);
+    }, 45_000);
+
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('beforeunload', onBeforeUnload);
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('beforeunload', onBeforeUnload);
+      window.clearInterval(intervalId);
+    };
+  }, [flushDeferredActionReceipts]);
+
+  useEffect(() => {
+    if (SWIPE_SETTLEMENT_MODE !== 'deferred') return;
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        void flushDeferredSwipeSettlements(1);
+      }
+    };
+
+    const onBeforeUnload = () => {
+      void flushDeferredSwipeSettlements(1);
+    };
+
+    const intervalId = window.setInterval(() => {
+      void flushDeferredSwipeSettlements(1);
+    }, 45_000);
+
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('beforeunload', onBeforeUnload);
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('beforeunload', onBeforeUnload);
+      window.clearInterval(intervalId);
+    };
+  }, [flushDeferredSwipeSettlements]);
+
   // ─── SWIPE HANDLERS ────────────────────────────────────────────
 
   const handleSwipe = async (direction: 'left' | 'right') => {
@@ -199,9 +472,10 @@ export default function DiscoveryPage() {
     }
     if (!canSwipe || !currentProfile) return;
 
+    const entitlementOk = await consumeSwipeEntitlement();
+    if (!entitlementOk) return;
+
     setExitDirection(direction);
-    incrementDailySwipes(publicKey);
-    refreshSubscription();
 
     // Track in history
     setSwipeHistory(prev => [...prev, currentProfile.walletAddress].slice(-5));
@@ -217,33 +491,43 @@ export default function DiscoveryPage() {
 
   const handleLike = async (targetWalletHash: string) => {
     if (!publicKey) return;
-    
+
     try {
-      // Get current user's profile (hashes raw publicKey → correct)
       const myProfile = await getProfile(publicKey);
-      // Get target profile by hash directly (NO double-hashing!)
       const targetProfile = await getProfileByHash(targetWalletHash);
-      
+
       if (!myProfile || !targetProfile) {
-        console.warn('Profile lookup failed — recording like with hashes only');
+        console.warn('Profile lookup failed; recording like with hashes only');
         const { hashWalletAddress } = await import('@/lib/wallet-hash');
         const myHash = await hashWalletAddress(publicKey);
-        recordLike(myHash, targetWalletHash);
+        await recordLike(myHash, targetWalletHash);
         return;
       }
-      
-      recordLike(myProfile.wallet_hash, targetWalletHash);
-      console.log('❤️ Liked:', targetProfile.name);
 
-      const isMutualMatch = checkMutualMatch(
+      const onChainReceiptTxId = ACTION_RECEIPT_MODE === 'immediate'
+        ? await recordActionReceipt(targetProfile.wallet_address, 'like')
+        : undefined;
+      if (ACTION_RECEIPT_MODE !== 'immediate') {
+        const pending = queueDeferredActionReceipt({
+          targetWalletAddress: targetProfile.wallet_address,
+          actionType: 'like',
+          createdAt: Date.now(),
+        });
+        if (pending >= DEFERRED_SETTLEMENT_THRESHOLD) {
+          void flushDeferredActionReceipts(1);
+        }
+      }
+      await recordLike(myProfile.wallet_hash, targetWalletHash, false, onChainReceiptTxId);
+
+      const isMutualMatch = await checkMutualMatch(
         myProfile.wallet_hash,
         targetWalletHash,
         myProfile,
-        targetProfile
+        targetProfile,
       );
-      
+
       if (isMutualMatch) {
-        const matchedData = profiles.find(p => p.walletAddress === targetWalletHash);
+        const matchedData = profiles.find((p) => p.walletAddress === targetWalletHash);
         if (matchedData) {
           setMatchedProfile(matchedData);
           setShowMatchModal(true);
@@ -256,22 +540,34 @@ export default function DiscoveryPage() {
 
   const handlePass = async (targetWalletHash: string) => {
     if (!publicKey) return;
-    
+
     try {
       const myProfile = await getProfile(publicKey);
-      
+
       if (!myProfile) {
         const { hashWalletAddress } = await import('@/lib/wallet-hash');
         const myHash = await hashWalletAddress(publicKey);
-        recordPass(myHash, targetWalletHash);
+        await recordPass(myHash, targetWalletHash);
         return;
       }
-      
-      recordPass(myProfile.wallet_hash, targetWalletHash);
+
       const targetProfile = await getProfileByHash(targetWalletHash);
-      if (targetProfile) {
-        console.log('👎 Passed:', targetProfile.name);
+      const onChainReceiptTxId = targetProfile && ACTION_RECEIPT_MODE === 'immediate'
+        ? await recordActionReceipt(targetProfile.wallet_address, 'pass')
+        : undefined;
+
+      if (targetProfile && ACTION_RECEIPT_MODE !== 'immediate') {
+        const pending = queueDeferredActionReceipt({
+          targetWalletAddress: targetProfile.wallet_address,
+          actionType: 'pass',
+          createdAt: Date.now(),
+        });
+        if (pending >= DEFERRED_SETTLEMENT_THRESHOLD) {
+          void flushDeferredActionReceipts(1);
+        }
       }
+
+      await recordPass(myProfile.wallet_hash, targetWalletHash, onChainReceiptTxId);
     } catch (error) {
       console.error('Failed to record pass:', error);
     }
@@ -283,18 +579,23 @@ export default function DiscoveryPage() {
     const lastUserHash = swipeHistory[swipeHistory.length - 1];
     setSwipeHistory(prev => prev.slice(0, -1));
     
-    const likes = JSON.parse(localStorage.getItem('bliss_likes_v2') || '[]');
-    const passes = JSON.parse(localStorage.getItem('bliss_passes_v2') || '[]');
+    const likes = JSON.parse(localStorage.getItem(BLISS_V3_KEYS.likes) || '[]');
+    const passes = JSON.parse(localStorage.getItem(BLISS_V3_KEYS.passes) || '[]');
     
     const filteredLikes = likes.filter((l: any) => l.to !== lastUserHash);
     const filteredPasses = passes.filter((p: any) => p.to !== lastUserHash);
     
-    localStorage.setItem('bliss_likes_v2', JSON.stringify(filteredLikes));
-    localStorage.setItem('bliss_passes_v2', JSON.stringify(filteredPasses));
+    localStorage.setItem(BLISS_V3_KEYS.likes, JSON.stringify(filteredLikes));
+    localStorage.setItem(BLISS_V3_KEYS.passes, JSON.stringify(filteredPasses));
     
     if (publicKey) {
-      decrementDailySwipes(publicKey);
-      refreshSubscription();
+      if (SWIPE_SETTLEMENT_MODE === 'deferred') {
+        const removedPending = popLastPendingSwipeSettlement(publicKey);
+        if (removedPending) {
+          decrementDailySwipes(publicKey);
+        }
+      }
+      void refreshSubscription();
     }
     
     if (currentIndex > 0) {
@@ -305,28 +606,43 @@ export default function DiscoveryPage() {
   const handleSuperLike = async () => {
     if (!currentProfile || !publicKey) return;
     if (!canSwipe || !canSuperLike) return;
-    
+
+    const entitlementOk = await consumeSwipeEntitlement();
+    if (!entitlementOk) return;
+
     setExitDirection('right');
-    incrementDailySwipes(publicKey);
     incrementDailySuperLikes(publicKey);
-    refreshSubscription();
-    
-    setSwipeHistory(prev => [...prev, currentProfile.walletAddress].slice(-5));
-    
+    await refreshSubscription();
+
+    setSwipeHistory((prev) => [...prev, currentProfile.walletAddress].slice(-5));
+
     try {
       const myProfile = await getProfile(publicKey);
       const targetProfile = await getProfileByHash(currentProfile.walletAddress);
-      
-      if (myProfile && targetProfile) {
-        recordLike(myProfile.wallet_hash, currentProfile.walletAddress, true);
 
-        const isMutualMatch = checkMutualMatch(
+      if (myProfile && targetProfile) {
+        const onChainReceiptTxId = ACTION_RECEIPT_MODE === 'immediate'
+          ? await recordActionReceipt(targetProfile.wallet_address, 'superlike')
+          : undefined;
+        if (ACTION_RECEIPT_MODE !== 'immediate') {
+          const pending = queueDeferredActionReceipt({
+            targetWalletAddress: targetProfile.wallet_address,
+            actionType: 'superlike',
+            createdAt: Date.now(),
+          });
+          if (pending >= DEFERRED_SETTLEMENT_THRESHOLD) {
+            void flushDeferredActionReceipts(1);
+          }
+        }
+        await recordLike(myProfile.wallet_hash, currentProfile.walletAddress, true, onChainReceiptTxId);
+
+        const isMutualMatch = await checkMutualMatch(
           myProfile.wallet_hash,
           currentProfile.walletAddress,
           myProfile,
-          targetProfile
+          targetProfile,
         );
-        
+
         if (isMutualMatch) {
           setMatchedProfile(currentProfile);
           setShowMatchModal(true);
@@ -335,8 +651,8 @@ export default function DiscoveryPage() {
     } catch (error) {
       console.error('Failed to record super like:', error);
     }
-    
-    setCurrentIndex(prev => prev + 1);
+
+    setCurrentIndex((prev) => prev + 1);
   };
 
   const handleDragEnd = (_event: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
@@ -734,3 +1050,8 @@ export default function DiscoveryPage() {
     </div>
   );
 }
+
+
+
+
+

@@ -1,6 +1,7 @@
 {
-  "program": "bliss_compatibility_matching.aleo",
+  "program": "bliss_compatibility_matching_v2.aleo",
   "version": "0.0.0",
   "description": "Zero-knowledge compatibility matching with private interest revelation",
   "license": "MIT"
 }
+

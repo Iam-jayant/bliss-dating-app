@@ -1,5 +1,5 @@
-import SubscriptionDashboard from '@/components/subscription/subscription-dashboard';
+import SubscriptionManagementPage from '@/components/subscription/subscription-management-page';
 
 export default function SettingsSubscriptionPage() {
-  return <SubscriptionDashboard />;
+  return <SubscriptionManagementPage />;
 }

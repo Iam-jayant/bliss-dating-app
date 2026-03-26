@@ -1,7 +1,17 @@
 // Bliss Wave 2: Zero-Knowledge Compatibility Matching Contract
 // Simplified MVP version for deployment
 
-program bliss_compatibility_matching.aleo {
+program bliss_compatibility_matching_v2.aleo {
+
+    // Single-use ticket for recording an action exactly once.
+    record ActionTicketRecord {
+        owner: address,
+        target: address,
+        action: u8,
+        issued_at: u32,
+        expires_at: u32,
+        nonce: u64,
+    }
     
     // Private match record - stores user's action on another profile
     record MatchRecord {
@@ -23,42 +33,67 @@ program bliss_compatibility_matching.aleo {
     @noupgrade
     async constructor() {}
     
-    // Record a like/pass action
-    transition record_action(
+    // Issue a short-lived action ticket.
+    transition issue_action_ticket(
+        private owner: address,
         private target_user: address,
         private action_type: u8,
-        private current_time: u32,
-    ) -> MatchRecord {
-        // Validate action type
+        private issued_at: u32,
+        private expires_at: u32,
+        private nonce: u64,
+    ) -> ActionTicketRecord {
+        assert_eq(owner, self.caller);
         assert(action_type <= 2u8);
-        
-        // Cannot match with self
-        assert_neq(self.caller, target_user);
-        
-        // Create match record
-        return MatchRecord {
-            owner: self.caller,
+        assert(issued_at > 0u32);
+        assert(expires_at > issued_at);
+        assert_neq(owner, target_user);
+
+        return ActionTicketRecord {
+            owner: owner,
             target: target_user,
             action: action_type,
+            issued_at: issued_at,
+            expires_at: expires_at,
+            nonce: nonce,
+        };
+    }
+
+    // Consume action ticket and materialize a match action record.
+    transition record_action(
+        private action_ticket: ActionTicketRecord,
+        private current_time: u32,
+    ) -> MatchRecord {
+        assert_eq(action_ticket.owner, self.caller);
+        assert(current_time >= action_ticket.issued_at);
+        assert(current_time <= action_ticket.expires_at);
+
+        return MatchRecord {
+            owner: action_ticket.owner,
+            target: action_ticket.target,
+            action: action_ticket.action,
             timestamp: current_time,
         };
     }
     
     // Check for mutual match and compute compatibility
     transition create_mutual_match(
+        private owner: address,
         private my_interests: u8,
         private their_interests: u8,
         private my_match_record: MatchRecord,
         private their_match_record: MatchRecord,
     ) -> MutualMatchRecord {
         // Verify I own my match record
-        assert_eq(my_match_record.owner, self.caller);
+        assert_eq(owner, self.caller);
+        assert_eq(my_match_record.owner, owner);
+        assert(my_match_record.timestamp > 0u32);
+        assert(their_match_record.timestamp > 0u32);
         
         // Verify my action was a like/super-like
         assert(my_match_record.action >= 1u8);
         
         // Verify their record targets me
-        assert_eq(their_match_record.target, self.caller);
+        assert_eq(their_match_record.target, owner);
         
         // Verify their action was also a like/super-like
         assert(their_match_record.action >= 1u8);
@@ -74,7 +109,7 @@ program bliss_compatibility_matching.aleo {
         
         // Create mutual match record
         return MutualMatchRecord {
-            owner: self.caller,
+            owner: owner,
             matched_with: my_match_record.target,
             shared_interests: shared_interests,
             compatibility_score: compatibility,
@@ -122,3 +157,4 @@ program bliss_compatibility_matching.aleo {
         return count;
     }
 }
+
