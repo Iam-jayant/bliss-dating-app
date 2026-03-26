@@ -1,6 +1,7 @@
 {
-  "program": "bliss_profile_verification.aleo",
+  "program": "bliss_profile_verification_v4.aleo",
   "version": "0.0.0",
   "description": "Privacy-first profile verification contract for Bliss dating protocol",
   "license": "MIT"
 }
+
