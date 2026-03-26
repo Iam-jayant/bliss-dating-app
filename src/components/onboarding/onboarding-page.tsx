@@ -7,7 +7,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { aleoService } from '@/lib/aleo/service';
-import { createSupabaseProfile, getProfile } from '@/lib/storage/profile';
+import { getProfile } from '@/lib/storage/profile';
+import { BLISS_V3_KEYS } from '@/lib/storage/schema';
 import { CheckCircle2, Wallet, Shield, User, Sparkles } from 'lucide-react';
 import { WalletSelectionModal } from './wallet-selection-modal';
 import { ProfileForm } from './profile-form';
@@ -20,7 +21,13 @@ interface OnboardingPageProps {
 type Step = 1 | 2 | 3 | 4;
 
 export function OnboardingPage({ onComplete }: OnboardingPageProps) {
-    const { connected, address: publicKey, executeTransaction } = useWallet();
+    const {
+        connected,
+        address: publicKey,
+        executeTransaction,
+        transactionStatus,
+        requestRecords,
+    } = useWallet();
     const router = useRouter();
 
     // State management
@@ -81,7 +88,9 @@ export function OnboardingPage({ onComplete }: OnboardingPageProps) {
             // Call Aleo contract for age verification
             const result = await aleoService.verifyAge(ageNum, {
                 publicKey: walletAddress,
-                requestTransaction: executeTransaction
+                requestTransaction: executeTransaction,
+                transactionStatus,
+                requestRecords,
             });
 
             if (!result.success) {
@@ -89,10 +98,44 @@ export function OnboardingPage({ onComplete }: OnboardingPageProps) {
                 return;
             }
 
-            // Create user in Supabase after successful verification (legacy compatibility)
-            await createSupabaseProfile(walletAddress, {
-                created_at: new Date().toISOString(),
-            });
+            if (!result.record) {
+                setError('Verification succeeded but no verification record was returned.');
+                return;
+            }
+
+            let possessionTxId: string | null = null;
+            try {
+                const possession = await aleoService.proveVerificationRecord(result.record, {
+                    publicKey: walletAddress,
+                    requestTransaction: executeTransaction,
+                    transactionStatus,
+                    requestRecords,
+                });
+
+                if (possession.success && possession.verified) {
+                    possessionTxId = possession.transaction?.id || null;
+                } else {
+                    setError(possession.error || 'Age proof possession check failed. Please retry verification.');
+                    return;
+                }
+            } catch (possessionError) {
+                console.warn('Possession check failed:', possessionError);
+                setError('Age proof possession check failed. Please retry verification.');
+                return;
+            }
+
+            const { hashWalletAddress } = await import('@/lib/wallet-hash');
+            const walletHash = await hashWalletAddress(walletAddress);
+            localStorage.setItem(
+                `${BLISS_V3_KEYS.ageVerificationPrefix}${walletHash}`,
+                JSON.stringify({
+                    verified: true,
+                    verifiedAt: Date.now(),
+                    verifyTxId: result.transaction?.id || null,
+                    possessionTxId,
+                    owner: result.record.owner,
+                }),
+            );
 
             setCurrentStep(3);
         } catch (err: any) {

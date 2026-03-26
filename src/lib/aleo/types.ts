@@ -7,6 +7,28 @@ export interface VerificationRecord {
   _version: number;
 }
 
+export interface ProviderAttestationRecord {
+  owner: string;
+  providerId: number;
+  ageOver18: boolean;
+  issuedAt: number;
+  expiresAt: number;
+  revoked: boolean;
+  nonce: string;
+  version: number;
+}
+
+export interface QuorumVerificationRecord {
+  owner: string;
+  verified: boolean;
+  providerMask: number;
+  issuedAt: number;
+  expiresAt: number;
+  revoked: boolean;
+  nonce: string;
+  version: number;
+}
+
 export interface AleoTransaction {
   id: string;
   status: 'pending' | 'confirmed' | 'failed';

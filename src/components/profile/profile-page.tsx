@@ -17,18 +17,26 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { CheckCircle2, Edit, Loader2, Save, X, Camera, Shield, LogOut } from 'lucide-react';
-import { getProfile, getProfileImageUrl, updateProfile, uploadProfileImage } from '@/lib/storage/profile';
+import { getProfile, getProfileImageUrl } from '@/lib/storage/profile';
 import type { ProfileData, BioPromptType, DatingIntent } from '@/lib/storage/types';
+import { profileService } from '@/lib/storage/profile-service';
+import { getProfileEncryptionSecret } from '@/lib/security/profile-secret';
 
 function getDisplayImage(imagePath: string | undefined, name: string): string {
-  if (!imagePath || imagePath.startsWith('mock_image_')) {
+  if (!imagePath) {
     return `https://api.dicebear.com/9.x/notionists/svg?seed=${encodeURIComponent(name)}&backgroundColor=c0aede`;
   }
   return getProfileImageUrl(imagePath);
 }
 
 export function ProfilePage() {
-  const { connected, address: publicKey, disconnect } = useWallet();
+  const {
+    connected,
+    address: publicKey,
+    disconnect,
+    executeTransaction,
+    requestRecords,
+  } = useWallet();
   const router = useRouter();
   
   const [profile, setProfile] = useState<ProfileData | null>(null);
@@ -119,20 +127,46 @@ export function ProfilePage() {
     try {
       setSaving(true);
       setError('');
+      const encryptionSecret = await getProfileEncryptionSecret(publicKey);
+      const locationGeohash = Number.parseInt(profile.location_geohash || '0', 10) || 0;
+      const walletAdapter = executeTransaction
+        ? {
+          publicKey,
+          requestTransaction: async (opts: {
+            program: string;
+            function: string;
+            inputs: string[];
+            fee: number;
+            privateFee: boolean;
+          }) => {
+            const result = await executeTransaction(opts);
+            if (!result?.transactionId) {
+              throw new Error('Profile transaction was rejected by the wallet.');
+            }
+            return { transactionId: result.transactionId };
+          },
+          requestRecords: async (programId: string) => {
+            if (!requestRecords) return [];
+            const records = await requestRecords(programId);
+            return records as Array<{ plaintext: string; data?: Record<string, string> }>;
+          },
+        }
+        : undefined;
 
-      let imagePath = profile.profile_image_path;
-      if (editImage) {
-        imagePath = await uploadProfileImage(editImage);
-      }
-
-      await updateProfile(publicKey, {
-        name: editName.trim(),
-        bio: editBio.trim(),
-        bio_prompt_type: editBioPrompt,
-        interests: editInterests,
-        dating_intent: editIntent,
-        profile_image_path: imagePath,
-      });
+      await profileService.updateProfile(
+        publicKey,
+        encryptionSecret,
+        {
+          name: editName.trim(),
+          bio: editBio.trim(),
+          bioPromptType: editBioPrompt,
+          interests: editInterests,
+          datingIntent: editIntent,
+          profileImage: editImage || undefined,
+        },
+        locationGeohash,
+        walletAdapter,
+      );
 
       // Reload profile
       const updated = await getProfile(publicKey);

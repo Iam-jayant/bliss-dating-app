@@ -20,7 +20,13 @@ export function AgeVerificationForm({
   onVerificationComplete,
   className = '' 
 }: AgeVerificationFormProps) {
-  const { connected, address: publicKey, executeTransaction } = useWallet();
+  const {
+    connected,
+    address: publicKey,
+    executeTransaction,
+    transactionStatus,
+    requestRecords,
+  } = useWallet();
   const [age, setAge] = useState('');
   const [isVerifying, setIsVerifying] = useState(false);
   const [verificationResult, setVerificationResult] = useState<{
@@ -55,7 +61,9 @@ export function AgeVerificationForm({
     try {
       const result = await aleoService.verifyAge(ageNumber, { 
         publicKey, 
-        requestTransaction: executeTransaction 
+        requestTransaction: executeTransaction,
+        transactionStatus,
+        requestRecords,
       });
       setVerificationResult(result);
 

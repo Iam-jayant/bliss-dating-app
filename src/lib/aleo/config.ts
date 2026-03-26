@@ -1,11 +1,11 @@
 // Aleo network configuration
 export const ALEO_CONFIG = {
   // Network configuration
-  NETWORK: 'testnet' as const,
-  API_URL: process.env.NEXT_PUBLIC_ALEO_API_URL || 'https://api.explorer.provable.com/v1/testnet',
+  NETWORK: (process.env.NEXT_PUBLIC_ALEO_NETWORK || 'testnet') as 'testnet',
+  API_URL: process.env.NEXT_PUBLIC_ALEO_API_URL || 'https://api.explorer.provable.com/v2',
 
   // Contract configuration
-  PROGRAM_ID: process.env.NEXT_PUBLIC_AGE_VERIFICATION_PROGRAM_ID || 'bliss_age_verification_v1.aleo',
+  PROGRAM_ID: process.env.NEXT_PUBLIC_AGE_VERIFICATION_PROGRAM || 'bliss_age_verification_v4.aleo',
 
   // Transaction configuration
   FEE_MICROCREDITS: 1000000, // 1 credit = 1,000,000 microcredits
@@ -18,3 +18,4 @@ export const ALEO_CONFIG = {
 } as const;
 
 export type AleoNetwork = typeof ALEO_CONFIG.NETWORK;
+

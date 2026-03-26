@@ -1,7 +1,9 @@
 import { ALEO_CONFIG } from './config';
-import { validateContractPrivacy, validateVerificationRecord, sanitizeError, privacyLog } from '../privacy-utils';
+import { validateVerificationRecord, sanitizeError, privacyLog } from '../privacy-utils';
 import type {
   VerificationRecord,
+  ProviderAttestationRecord,
+  QuorumVerificationRecord,
   AgeVerificationResult,
   ProofOfPossessionResult,
   AleoTransaction
@@ -13,6 +15,37 @@ class WalletNotConnectedError extends Error {
     this.name = 'WalletNotConnectedError';
   }
 }
+
+type WalletTransactionStatusResponse = {
+  status?: string;
+  transactionId?: string;
+  transaction_id?: string;
+  id?: string;
+  hash?: string;
+  fee?: unknown;
+  timestamp?: number;
+  execution?: unknown;
+  transaction?: unknown;
+  outputs?: unknown[];
+};
+
+type WalletRecord = {
+  plaintext?: string;
+  data?: Record<string, string>;
+};
+
+type AleoServiceWalletAdapter = {
+  publicKey?: string;
+  requestTransaction?: (tx: {
+    program: string;
+    function: string;
+    inputs: string[];
+    fee: number;
+    privateFee: boolean;
+  }) => Promise<unknown>;
+  transactionStatus?: (transactionId: string) => Promise<WalletTransactionStatusResponse>;
+  requestRecords?: (programId: string, includePlaintext?: boolean) => Promise<unknown[]>;
+};
 
 /**
  * Aleo service for interacting with the age verification contract
@@ -26,13 +59,314 @@ export class AleoService {
     this.apiUrl = ALEO_CONFIG.API_URL;
   }
 
+  async createProviderAdmin(
+    walletAdapter: AleoServiceWalletAdapter,
+  ): Promise<{ success: boolean; transaction?: AleoTransaction; error?: string }> {
+    try {
+      if (!walletAdapter?.publicKey) throw new WalletNotConnectedError();
+      if (!walletAdapter?.requestTransaction) {
+        throw new Error('Wallet requestTransaction method not available');
+      }
+
+      const txResponse = await walletAdapter.requestTransaction({
+        program: this.programId,
+        function: 'create_provider_admin',
+        inputs: [walletAdapter.publicKey],
+        fee: ALEO_CONFIG.FEE_MICROCREDITS,
+        privateFee: false,
+      });
+
+      const transactionId = this.extractTransactionId(txResponse);
+      if (!transactionId) {
+        throw new Error('Provider admin transaction did not return an ID');
+      }
+
+      const tx = await this.waitForConfirmedTransaction(transactionId, walletAdapter);
+      return {
+        success: true,
+        transaction: {
+          id: String((tx as Record<string, unknown>)?.id || transactionId),
+          status: tx.status === 'failed' ? 'failed' : 'confirmed',
+          fee: tx.fee?.toString() || ALEO_CONFIG.FEE_MICROCREDITS.toString(),
+          timestamp: tx.timestamp || Date.now(),
+        },
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to create provider admin',
+      };
+    }
+  }
+
+  async registerProvider(
+    providerAddress: string,
+    providerId: number,
+    walletAdapter: AleoServiceWalletAdapter,
+  ): Promise<{ success: boolean; transaction?: AleoTransaction; error?: string }> {
+    try {
+      if (!walletAdapter?.publicKey) throw new WalletNotConnectedError();
+      if (!walletAdapter?.requestTransaction) {
+        throw new Error('Wallet requestTransaction method not available');
+      }
+      if (!walletAdapter?.requestRecords) {
+        throw new Error('Wallet requestRecords method not available');
+      }
+
+      const adminRecord = await this.findLatestProviderAdminRecord(
+        walletAdapter.requestRecords,
+        walletAdapter.publicKey,
+      );
+      if (!adminRecord?.plaintext) {
+        throw new Error('No provider admin record found for caller. Create provider admin first.');
+      }
+
+      const txResponse = await walletAdapter.requestTransaction({
+        program: this.programId,
+        function: 'register_provider',
+        inputs: [
+          adminRecord.plaintext,
+          providerAddress,
+          `${providerId}u8`,
+        ],
+        fee: ALEO_CONFIG.FEE_MICROCREDITS,
+        privateFee: false,
+      });
+
+      const transactionId = this.extractTransactionId(txResponse);
+      if (!transactionId) {
+        throw new Error('Provider registration transaction did not return an ID');
+      }
+
+      const tx = await this.waitForConfirmedTransaction(transactionId, walletAdapter);
+      return {
+        success: true,
+        transaction: {
+          id: String((tx as Record<string, unknown>)?.id || transactionId),
+          status: tx.status === 'failed' ? 'failed' : 'confirmed',
+          fee: tx.fee?.toString() || ALEO_CONFIG.FEE_MICROCREDITS.toString(),
+          timestamp: tx.timestamp || Date.now(),
+        },
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to register provider',
+      };
+    }
+  }
+
+  async revokeProvider(
+    providerAddress: string,
+    providerId: number,
+    walletAdapter: AleoServiceWalletAdapter,
+  ): Promise<{ success: boolean; transaction?: AleoTransaction; error?: string }> {
+    try {
+      if (!walletAdapter?.publicKey) throw new WalletNotConnectedError();
+      if (!walletAdapter?.requestTransaction) {
+        throw new Error('Wallet requestTransaction method not available');
+      }
+      if (!walletAdapter?.requestRecords) {
+        throw new Error('Wallet requestRecords method not available');
+      }
+
+      const adminRecord = await this.findLatestProviderAdminRecord(
+        walletAdapter.requestRecords,
+        walletAdapter.publicKey,
+      );
+      if (!adminRecord?.plaintext) {
+        throw new Error('No provider admin record found for caller.');
+      }
+
+      const providerAuth = await this.findLatestProviderAuthorization(
+        walletAdapter.requestRecords,
+        providerAddress,
+        providerId,
+      );
+      if (!providerAuth?.plaintext) {
+        throw new Error('No provider authorization record found for provider and provider_id.');
+      }
+
+      const txResponse = await walletAdapter.requestTransaction({
+        program: this.programId,
+        function: 'revoke_provider',
+        inputs: [
+          adminRecord.plaintext,
+          providerAuth.plaintext,
+        ],
+        fee: ALEO_CONFIG.FEE_MICROCREDITS,
+        privateFee: false,
+      });
+
+      const transactionId = this.extractTransactionId(txResponse);
+      if (!transactionId) {
+        throw new Error('Provider revoke transaction did not return an ID');
+      }
+
+      const tx = await this.waitForConfirmedTransaction(transactionId, walletAdapter);
+      return {
+        success: true,
+        transaction: {
+          id: String((tx as Record<string, unknown>)?.id || transactionId),
+          status: tx.status === 'failed' ? 'failed' : 'confirmed',
+          fee: tx.fee?.toString() || ALEO_CONFIG.FEE_MICROCREDITS.toString(),
+          timestamp: tx.timestamp || Date.now(),
+        },
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to revoke provider',
+      };
+    }
+  }
+
+  async issueProviderAttestation(
+    providerId: number,
+    age: number,
+    expiresAt: number,
+    walletAdapter: AleoServiceWalletAdapter,
+  ): Promise<{ success: boolean; transaction?: AleoTransaction; error?: string }> {
+    try {
+      if (!walletAdapter?.publicKey) throw new WalletNotConnectedError();
+      if (!walletAdapter?.requestTransaction) {
+        throw new Error('Wallet requestTransaction method not available');
+      }
+      if (!walletAdapter?.requestRecords) {
+        throw new Error('Wallet requestRecords method not available');
+      }
+
+      const providerAuthorization = await this.findLatestProviderAuthorization(
+        walletAdapter.requestRecords,
+        walletAdapter.publicKey,
+        providerId,
+      );
+      if (!providerAuthorization?.plaintext) {
+        throw new Error('No active provider authorization record found for this provider and provider_id.');
+      }
+
+      const issuedAt = Math.floor(Date.now() / 1000);
+      const nonce = `${Date.now()}`;
+      const txResponse = await walletAdapter.requestTransaction({
+        program: this.programId,
+        function: 'issue_provider_attestation',
+        inputs: [
+          providerAuthorization.plaintext,
+          walletAdapter.publicKey,
+          `${providerId}u8`,
+          `${age}u8`,
+          `${issuedAt}u32`,
+          `${expiresAt}u32`,
+          `${nonce}u64`,
+          '1u16',
+        ],
+        fee: ALEO_CONFIG.FEE_MICROCREDITS,
+        privateFee: false,
+      });
+
+      const transactionId = this.extractTransactionId(txResponse);
+      if (!transactionId) {
+        throw new Error('Provider attestation transaction did not return an ID');
+      }
+
+      const tx = await this.waitForConfirmedTransaction(transactionId, walletAdapter);
+      return {
+        success: true,
+        transaction: {
+          id: String((tx as Record<string, unknown>)?.id || transactionId),
+          status: tx.status === 'failed' ? 'failed' : 'confirmed',
+          fee: tx.fee?.toString() || ALEO_CONFIG.FEE_MICROCREDITS.toString(),
+          timestamp: tx.timestamp || Date.now(),
+        },
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to issue provider attestation',
+      };
+    }
+  }
+
+  async verifyAgeWithQuorum(
+    attestations: [ProviderAttestationRecord, ProviderAttestationRecord, ProviderAttestationRecord],
+    requiredQuorum: 2 | 3,
+    validityWindowSeconds: number,
+    walletAdapter: AleoServiceWalletAdapter,
+  ): Promise<{ success: boolean; transaction?: AleoTransaction; error?: string }> {
+    try {
+      if (!walletAdapter?.publicKey) throw new WalletNotConnectedError();
+      if (!walletAdapter?.requestTransaction) {
+        throw new Error('Wallet requestTransaction method not available');
+      }
+      if (!walletAdapter?.requestRecords) {
+        throw new Error('Wallet requestRecords method not available');
+      }
+
+      const records = await walletAdapter.requestRecords(this.programId, true);
+      const findAttestation = (attestation: ProviderAttestationRecord): WalletRecord | undefined => {
+        const nonce = String(attestation.nonce);
+        return (records as WalletRecord[]).find((record) => {
+          const data = record.data || {};
+          const owner = this.cleanLeoValue(data.owner);
+          const recordNonce = this.cleanLeoValue(data.nonce);
+          return owner === attestation.owner && recordNonce === nonce;
+        });
+      };
+
+      const a1 = findAttestation(attestations[0]);
+      const a2 = findAttestation(attestations[1]);
+      const a3 = findAttestation(attestations[2]);
+      if (!a1?.plaintext || !a2?.plaintext || !a3?.plaintext) {
+        throw new Error('Could not resolve plaintext attestation records for quorum verification');
+      }
+
+      const now = Math.floor(Date.now() / 1000);
+      const txResponse = await walletAdapter.requestTransaction({
+        program: this.programId,
+        function: 'verify_age_with_quorum',
+        inputs: [
+          walletAdapter.publicKey,
+          a1.plaintext,
+          a2.plaintext,
+          a3.plaintext,
+          `${now}u32`,
+          `${requiredQuorum}u8`,
+          `${validityWindowSeconds}u32`,
+        ],
+        fee: ALEO_CONFIG.FEE_MICROCREDITS,
+        privateFee: false,
+      });
+
+      const transactionId = this.extractTransactionId(txResponse);
+      if (!transactionId) {
+        throw new Error('Quorum verification transaction did not return an ID');
+      }
+
+      const tx = await this.waitForConfirmedTransaction(transactionId, walletAdapter);
+      return {
+        success: true,
+        transaction: {
+          id: String((tx as Record<string, unknown>)?.id || transactionId),
+          status: tx.status === 'failed' ? 'failed' : 'confirmed',
+          fee: tx.fee?.toString() || ALEO_CONFIG.FEE_MICROCREDITS.toString(),
+          timestamp: tx.timestamp || Date.now(),
+        },
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to verify age with quorum',
+      };
+    }
+  }
+
   /**
    * Verify user's age using zero-knowledge proof
    * @param age - User's age (will be kept private)
    * @param walletAdapter - Connected wallet adapter with requestTransaction method
    * @returns Promise<AgeVerificationResult>
    */
-  async verifyAge(age: number, walletAdapter: { publicKey?: string; requestTransaction?: any }): Promise<AgeVerificationResult> {
+  async verifyAge(age: number, walletAdapter: AleoServiceWalletAdapter): Promise<AgeVerificationResult> {
     try {
       if (!walletAdapter?.publicKey) {
         throw new WalletNotConnectedError();
@@ -52,7 +386,7 @@ export class AleoService {
       privacyLog('Starting age verification process (age not logged for privacy)');
 
       // Create transaction using Leo docs format
-      const inputs = [`${age}u8`];
+      const inputs = [walletAdapter.publicKey, `${age}u8`];
       const fee = ALEO_CONFIG.FEE_MICROCREDITS;
 
       console.log('Creating transaction with:', {
@@ -74,22 +408,26 @@ export class AleoService {
       console.log('Requesting transaction from wallet:', txOptions);
 
       // Request transaction from wallet - this should trigger the wallet popup
-      const transactionId = await walletAdapter.requestTransaction(txOptions);
+      const txResponse = await walletAdapter.requestTransaction(txOptions);
+      const transactionId = this.extractTransactionId(txResponse);
 
       if (!transactionId) {
         throw new Error('Transaction request failed (no ID returned)');
       }
 
-      console.log('Transaction submitted successfully:', transactionId);
+      const tx = await this.waitForConfirmedTransaction(transactionId, walletAdapter);
+      const resolvedTransactionId = String((tx as Record<string, unknown>)?.id || transactionId);
+      const outputs = this.extractTransitionOutputs(tx);
+      let record = this.parseVerificationRecord(outputs);
 
-      // For now, simulate a successful verification record
-      // In real implementation, you would parse the actual transaction outputs
-      const record: VerificationRecord = {
-        owner: walletAdapter.publicKey,
-        verified: true,
-        _nonce: `nonce_${Date.now()}`,
-        _version: 1,
-      };
+      // Explorer output may omit private records. Fetch latest record from wallet if available.
+      if (!record && walletAdapter.requestRecords) {
+        record = await this.waitForVerificationRecord(walletAdapter.requestRecords);
+      }
+
+      if (!record) {
+        throw new Error('Verification record not available after confirmed transaction. Please retry verification.');
+      }
 
       // Validate verification record privacy
       if (!validateVerificationRecord(record)) {
@@ -102,10 +440,10 @@ export class AleoService {
         success: true,
         record,
         transaction: {
-          id: transactionId,
-          status: 'confirmed',
-          fee: fee.toString(),
-          timestamp: Date.now(),
+          id: resolvedTransactionId,
+          status: tx.status === 'failed' ? 'failed' : 'confirmed',
+          fee: tx.fee?.toString() || fee.toString(),
+          timestamp: tx.timestamp || Date.now(),
         }
       };
 
@@ -138,7 +476,7 @@ export class AleoService {
    */
   async proveVerificationRecord(
     record: VerificationRecord,
-    walletAdapter: { publicKey?: string; requestTransaction?: any }
+    walletAdapter: AleoServiceWalletAdapter
   ): Promise<ProofOfPossessionResult> {
     try {
       if (!walletAdapter?.publicKey) {
@@ -149,11 +487,17 @@ export class AleoService {
         throw new Error('Wallet requestTransaction method not available');
       }
 
-      // Format record for transaction input
-      const recordInput = this.formatRecordInput(record);
+      // Prefer wallet plaintext record when available, fallback to formatted object.
+      let recordInput = this.formatRecordInput(record);
+      if (walletAdapter.requestRecords) {
+        const latestPlaintext = await this.findLatestVerificationPlaintext(walletAdapter.requestRecords);
+        if (latestPlaintext) {
+          recordInput = latestPlaintext;
+        }
+      }
 
       // Create transaction using Leo docs format
-      const inputs = [recordInput];
+      const inputs = [recordInput, walletAdapter.publicKey];
       const fee = ALEO_CONFIG.FEE_MICROCREDITS;
 
       const txOptions = {
@@ -165,24 +509,26 @@ export class AleoService {
       };
 
       // Request transaction from wallet
-      const transactionId = await walletAdapter.requestTransaction(txOptions);
+      const txResponse = await walletAdapter.requestTransaction(txOptions);
+      const transactionId = this.extractTransactionId(txResponse);
 
       if (!transactionId) {
         throw new Error('Transaction request failed (no ID returned)');
       }
 
-      // For now, simulate successful verification
-      // In real implementation, you would parse the actual transaction outputs
-      const verified = true;
+      const tx = await this.waitForConfirmedTransaction(transactionId, walletAdapter);
+      const resolvedTransactionId = String((tx as Record<string, unknown>)?.id || transactionId);
+      const outputs = this.extractTransitionOutputs(tx);
+      const verified = this.parseBooleanOutput(outputs);
 
       return {
         success: true,
         verified,
         transaction: {
-          id: transactionId,
-          status: 'confirmed',
-          fee: fee.toString(),
-          timestamp: Date.now(),
+          id: resolvedTransactionId,
+          status: tx.status === 'failed' ? 'failed' : 'confirmed',
+          fee: tx.fee?.toString() || fee.toString(),
+          timestamp: tx.timestamp || Date.now(),
         }
       };
 
@@ -224,10 +570,16 @@ export class AleoService {
       }
 
       const data = await response.json();
+      const statusRaw = String(data.status || '').toLowerCase();
+      const status = statusRaw === 'accepted' || statusRaw === 'confirmed' || statusRaw === 'finalized'
+        ? 'confirmed'
+        : statusRaw === 'rejected' || statusRaw === 'failed'
+          ? 'failed'
+          : 'pending';
 
       return {
         id: transactionId,
-        status: data.status === 'accepted' ? 'confirmed' : 'pending',
+        status,
         fee: data.fee?.toString() || '0',
         timestamp: data.timestamp,
       };
@@ -245,20 +597,25 @@ export class AleoService {
   private parseVerificationRecord(outputs: any[]): VerificationRecord | undefined {
     try {
       // Look for record output in transaction
-      const recordOutput = outputs.find(output =>
-        output.type === 'record' && output.value
-      );
+      const recordOutput = outputs.find((output) => {
+        const type = String(output.type || '').toLowerCase();
+        const value = output.value || output.record || output.plaintext || output;
+        return (type.includes('record') || value?.owner) && value;
+      });
 
       if (!recordOutput) {
         return undefined;
       }
 
-      const record = recordOutput.value;
+      const record = recordOutput.value || recordOutput.record || recordOutput.plaintext || recordOutput;
+      const owner = record.owner || record.owner?.value || record['owner.private'];
+      const verifiedRaw = record.verified || record.verified?.value || record['verified.private'];
+      const nonce = record.nonce || record._nonce || record['nonce.private'] || `nonce_${Date.now()}`;
 
       return {
-        owner: record.owner,
-        verified: record.verified === 'true' || record.verified === true,
-        _nonce: record.nonce, // Contract uses 'nonce', but our interface uses '_nonce'
+        owner: String(owner),
+        verified: String(verifiedRaw).includes('true') || verifiedRaw === true,
+        _nonce: String(nonce),
         _version: 1, // Default version since contract doesn't have version field
       };
 
@@ -274,11 +631,12 @@ export class AleoService {
    */
   private parseBooleanOutput(outputs: any[]): boolean {
     try {
-      const boolOutput = outputs.find(output =>
-        output.type === 'private' || output.type === 'public'
-      );
-
-      return boolOutput?.value === 'true' || boolOutput?.value === true;
+      const boolOutput = outputs.find((output) => {
+        const value = output.value ?? output;
+        return typeof value === 'boolean' || String(value).includes('true') || String(value).includes('false');
+      });
+      const value = boolOutput?.value ?? boolOutput;
+      return value === true || String(value).toLowerCase().includes('true');
 
     } catch (error) {
       console.error('Failed to parse boolean output:', error);
@@ -296,6 +654,293 @@ export class AleoService {
       verified: ${record.verified},
       nonce: ${record._nonce}
     }`;
+  }
+
+  private isExplorerTransactionId(value: string): boolean {
+    return /^at1[0-9a-z]+$/.test(value);
+  }
+
+  private normalizeStatus(status: unknown): string {
+    return String(status || '').toLowerCase();
+  }
+
+  private isConfirmedStatus(status: string): boolean {
+    return status === 'accepted'
+      || status === 'confirmed'
+      || status === 'finalized'
+      || status === 'completed'
+      || status === 'success';
+  }
+
+  private isFailedStatus(status: string): boolean {
+    return status === 'failed'
+      || status === 'rejected'
+      || status === 'error'
+      || status === 'cancelled'
+      || status === 'canceled';
+  }
+
+  private cleanLeoValue(raw: string | undefined): string {
+    if (!raw) return '';
+    return raw.trim().replace(/\.(private|public|constant)$/i, '');
+  }
+
+  private async findLatestVerificationPlaintext(
+    requestRecords: (programId: string, includePlaintext?: boolean) => Promise<unknown[]>,
+  ): Promise<string | null> {
+    try {
+      const records = await requestRecords(this.programId, true);
+      if (!Array.isArray(records) || records.length === 0) return null;
+      const latest = records[records.length - 1] as WalletRecord;
+      return typeof latest?.plaintext === 'string' ? latest.plaintext : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async findLatestProviderAuthorization(
+    requestRecords: (programId: string, includePlaintext?: boolean) => Promise<unknown[]>,
+    providerAddress: string,
+    providerId: number,
+  ): Promise<WalletRecord | undefined> {
+    const records = await requestRecords(this.programId, true);
+    if (!Array.isArray(records) || records.length === 0) return undefined;
+
+    for (let i = records.length - 1; i >= 0; i -= 1) {
+      const record = records[i] as WalletRecord;
+      const data = record.data || {};
+      const owner = this.cleanLeoValue(data.owner);
+      const idRaw = this.cleanLeoValue(data.provider_id);
+      const activeRaw = this.cleanLeoValue(data.active);
+
+      if (!owner || !idRaw || !activeRaw) continue;
+
+      const idParsed = Number(idRaw.replace(/u\d+$/, ''));
+      const isActive = activeRaw === 'true' || activeRaw === '1';
+      if (owner === providerAddress && idParsed === providerId && isActive) {
+        return record;
+      }
+    }
+
+    return undefined;
+  }
+
+  private async findLatestProviderAdminRecord(
+    requestRecords: (programId: string, includePlaintext?: boolean) => Promise<unknown[]>,
+    adminAddress: string,
+  ): Promise<WalletRecord | undefined> {
+    const records = await requestRecords(this.programId, true);
+    if (!Array.isArray(records) || records.length === 0) return undefined;
+
+    for (let i = records.length - 1; i >= 0; i -= 1) {
+      const record = records[i] as WalletRecord;
+      const data = record.data || {};
+      const owner = this.cleanLeoValue(data.owner);
+      const versionRaw = this.cleanLeoValue(data.version);
+      if (!owner || !versionRaw) continue;
+
+      if (owner === adminAddress) {
+        return record;
+      }
+    }
+
+    return undefined;
+  }
+
+  private async findLatestVerificationRecord(
+    requestRecords: (programId: string, includePlaintext?: boolean) => Promise<unknown[]>,
+  ): Promise<VerificationRecord | undefined> {
+    try {
+      const records = await requestRecords(this.programId, true);
+      if (!Array.isArray(records) || records.length === 0) return undefined;
+      const latest = records[records.length - 1] as WalletRecord;
+      const data = latest?.data || {};
+
+      const ownerFromData = this.cleanLeoValue(data.owner);
+      const verifiedFromData = this.cleanLeoValue(data.verified);
+      const nonceFromData = this.cleanLeoValue(data._nonce || data.nonce);
+
+      if (ownerFromData && nonceFromData) {
+        return {
+          owner: ownerFromData,
+          verified: verifiedFromData.includes('true') || verifiedFromData === '1',
+          _nonce: nonceFromData,
+          _version: 1,
+        };
+      }
+
+      if (typeof latest?.plaintext === 'string') {
+        const ownerMatch = latest.plaintext.match(/owner:\s*([^,\n}]+)/i);
+        const verifiedMatch = latest.plaintext.match(/verified:\s*([^,\n}]+)/i);
+        const nonceMatch = latest.plaintext.match(/(?:_nonce|nonce):\s*([^,\n}]+)/i);
+
+        const owner = this.cleanLeoValue(ownerMatch?.[1]);
+        const verifiedRaw = this.cleanLeoValue(verifiedMatch?.[1]);
+        const nonce = this.cleanLeoValue(nonceMatch?.[1]);
+
+        if (owner && nonce) {
+          return {
+            owner,
+            verified: verifiedRaw.includes('true') || verifiedRaw === '1',
+            _nonce: nonce,
+            _version: 1,
+          };
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to load latest verification record from wallet:', error);
+    }
+
+    return undefined;
+  }
+
+  private async waitForVerificationRecord(
+    requestRecords: (programId: string, includePlaintext?: boolean) => Promise<unknown[]>,
+    attempts = 15,
+    intervalMs = 1200,
+  ): Promise<VerificationRecord | undefined> {
+    for (let i = 0; i < attempts; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      const record = await this.findLatestVerificationRecord(requestRecords);
+      if (record?.verified) return record;
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+    return undefined;
+  }
+
+  private extractTransactionId(response: unknown): string | null {
+    if (!response) return null;
+    if (typeof response === 'string') return response.trim();
+    if (typeof response === 'object' && response !== null) {
+      const tx = response as Record<string, unknown>;
+      const nestedTx = tx.transaction && typeof tx.transaction === 'object'
+        ? (tx.transaction as Record<string, unknown>)
+        : null;
+
+      const candidates = [
+        tx.transactionId,
+        tx.transaction_id,
+        tx.id,
+        tx.hash,
+        nestedTx?.transactionId,
+        nestedTx?.transaction_id,
+        nestedTx?.id,
+        nestedTx?.hash,
+      ];
+
+      // Prefer explorer tx ids when available.
+      for (const candidate of candidates) {
+        if (typeof candidate === 'string' && this.isExplorerTransactionId(candidate.trim())) {
+          return candidate.trim();
+        }
+      }
+
+      for (const candidate of candidates) {
+        if (typeof candidate === 'string' && candidate.trim()) {
+          return candidate.trim();
+        }
+      }
+    }
+    return null;
+  }
+
+  private async fetchExplorerTransaction(transactionId: string): Promise<any | null> {
+    const response = await fetch(`${this.apiUrl}/transaction/${transactionId}`);
+    if (!response.ok) return null;
+    const data = await response.json();
+    return {
+      ...data,
+      id: data.id || transactionId,
+    };
+  }
+
+  private async waitForConfirmedTransaction(
+    transactionId: string,
+    walletAdapter?: AleoServiceWalletAdapter,
+    attempts = 60,
+  ): Promise<any> {
+    // 1) Preferred path: wallet-native status polling.
+    if (walletAdapter?.transactionStatus) {
+      for (let i = 0; i < attempts; i += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        const statusResponse = await walletAdapter.transactionStatus(transactionId);
+        const status = this.normalizeStatus(statusResponse?.status);
+        const resolvedId = this.extractTransactionId(statusResponse) || transactionId;
+
+        if (this.isFailedStatus(status)) {
+          throw new Error(`Transaction ${status}: ${resolvedId}`);
+        }
+
+        if (this.isConfirmedStatus(status)) {
+          if (this.isExplorerTransactionId(resolvedId)) {
+            // eslint-disable-next-line no-await-in-loop
+            const explorerTx = await this.fetchExplorerTransaction(resolvedId);
+            if (explorerTx) {
+              return explorerTx;
+            }
+          }
+
+          return {
+            id: resolvedId,
+            status: 'confirmed',
+            fee: statusResponse?.fee || '0',
+            timestamp: statusResponse?.timestamp || Date.now(),
+            walletStatus: statusResponse,
+            outputs: statusResponse?.outputs || [],
+          };
+        }
+
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+    }
+
+    // 2) Fallback: explorer polling only for real explorer tx ids.
+    if (this.isExplorerTransactionId(transactionId)) {
+      for (let i = 0; i < attempts; i += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        const data = await this.fetchExplorerTransaction(transactionId);
+        if (data) {
+          const status = this.normalizeStatus(data.status);
+          if (this.isConfirmedStatus(status)) return data;
+          if (this.isFailedStatus(status)) {
+            throw new Error(`Transaction ${status}: ${transactionId}`);
+          }
+        }
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+    }
+
+    if (!this.isExplorerTransactionId(transactionId)) {
+      throw new Error(
+        `Wallet returned a local request id (${transactionId}) without a confirmed on-chain transaction id.`,
+      );
+    }
+
+    throw new Error(`Transaction confirmation timed out: ${transactionId}`);
+  }
+
+  private extractTransitionOutputs(transaction: any): any[] {
+    const outputs: any[] = [];
+    const transitions = transaction?.execution?.transitions
+      || transaction?.transaction?.execution?.transitions
+      || transaction?.transitions
+      || [];
+
+    transitions.forEach((transition: any) => {
+      const transitionOutputs = transition?.outputs || transition?.finalize || [];
+      if (Array.isArray(transitionOutputs)) {
+        outputs.push(...transitionOutputs);
+      }
+    });
+
+    if (outputs.length === 0 && Array.isArray(transaction?.outputs)) {
+      outputs.push(...transaction.outputs);
+    }
+
+    return outputs;
   }
   /**
    * Test a standard transaction (transfer_public) to verify wallet plumbing

@@ -39,6 +39,7 @@ next-env.d.ts
 
 .genkit/*
 .env*
+!.env.example
 
 # firebase
 firebase-debug.log
@@ -47,6 +48,12 @@ firestore-debug.log
 # aleo
 /contracts/*/build/
 /contracts/*/artifacts/
+/contracts/*/outputs/
+/contracts/*/deployment/
+/contracts/deployment-artifacts/deployment-*.json
+/contracts/deployment-artifacts/build-*.json
+!/contracts/deployment-artifacts/deployment-summary-testnet.json
+.aleo/
 
 # windows
 desktop.ini

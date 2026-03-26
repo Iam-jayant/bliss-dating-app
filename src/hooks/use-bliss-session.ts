@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { useWallet } from '@provablehq/aleo-wallet-adaptor-react';
 import { getProfile } from '@/lib/storage/profile';
 import type { VerificationRecord } from '@/lib/aleo/types';
+import { BLISS_V3_KEYS } from '@/lib/storage/schema';
+import { hashWalletAddress } from '@/lib/wallet-hash';
 
 interface BlissSession {
   isConnected: boolean;
@@ -69,16 +71,21 @@ export function useBlissSession() {
         
         try {
           const profile = await getProfile(publicKey);
+          const walletHash = await hashWalletAddress(publicKey);
+          const verificationRaw = localStorage.getItem(`${BLISS_V3_KEYS.ageVerificationPrefix}${walletHash}`);
+          const verificationCache = verificationRaw
+            ? JSON.parse(verificationRaw) as { verified?: boolean; owner?: string }
+            : null;
+          const hasVerifiedAge = verificationCache?.verified === true && verificationCache?.owner === publicKey;
           
           if (profile) {
-            // Profile exists - mark as verified
-            console.log('✅ Existing profile found, auto-verifying session');
+            // Profile presence alone never implies age verification.
             setSession(prev => ({
               ...prev,
               isConnected: connected,
               address: publicKey,
               hasProfile: true,
-              isVerified: true,
+              isVerified: hasVerifiedAge,
               sessionId: prev.sessionId || `bliss-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
             }));
           } else {
@@ -89,6 +96,7 @@ export function useBlissSession() {
               isConnected: connected,
               address: publicKey,
               hasProfile: false,
+              isVerified: hasVerifiedAge,
             }));
           }
         } catch (err) {

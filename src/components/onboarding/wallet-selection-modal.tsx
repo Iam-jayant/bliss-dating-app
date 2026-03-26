@@ -18,8 +18,8 @@ export function WalletSelectionModal({ open, onClose }: WalletSelectionModalProp
     const sortedWallets = useMemo(() => {
         if (!wallets) return [];
         return [...wallets].sort((a, b) => {
-            if (a.readyState === WalletReadyState.Installed && b.readyState !== WalletReadyState.Installed) return -1;
-            if (a.readyState !== WalletReadyState.Installed && b.readyState === WalletReadyState.Installed) return 1;
+            if (a.readyState === WalletReadyState.INSTALLED && b.readyState !== WalletReadyState.INSTALLED) return -1;
+            if (a.readyState !== WalletReadyState.INSTALLED && b.readyState === WalletReadyState.INSTALLED) return 1;
             return 0;
         });
     }, [wallets]);
@@ -38,12 +38,33 @@ export function WalletSelectionModal({ open, onClose }: WalletSelectionModalProp
         setConnecting(true);
         try {
             selectWallet(walletName as any);
-            await new Promise(resolve => setTimeout(resolve, 150));
-            await connect(Network.TESTNET);
+            await new Promise((resolve) => setTimeout(resolve, 250));
+
+            try {
+                await connect(Network.TESTNET);
+            } catch (firstConnectError) {
+                const firstMessage = firstConnectError instanceof Error
+                    ? firstConnectError.message.toLowerCase()
+                    : String(firstConnectError).toLowerCase();
+
+                if (!firstMessage.includes('wallet not selected')) {
+                    throw firstConnectError;
+                }
+
+                // Some adapters need one extra event tick after wallet selection.
+                await new Promise((resolve) => setTimeout(resolve, 250));
+                await connect(Network.TESTNET);
+            }
+
             onClose();
         } catch (err) {
             console.error('Failed to connect wallet:', err);
-            setError(err instanceof Error ? err.message : 'Connection failed');
+            const message = err instanceof Error ? err.message : 'Connection failed';
+            if (message.toLowerCase().includes('wallet not selected')) {
+                setError('Wallet was not selected in time. Please click your wallet again and approve the connection popup.');
+            } else {
+                setError(message);
+            }
         } finally {
             setConnecting(false);
         }
@@ -79,7 +100,7 @@ export function WalletSelectionModal({ open, onClose }: WalletSelectionModalProp
 
                 <ul className="wallet-adapter-modal-list space-y-3">
                     {sortedWallets.map((w) => {
-                        const isInstalled = w.readyState === WalletReadyState.Installed;
+                        const isInstalled = w.readyState === WalletReadyState.INSTALLED;
 
                         return (
                             <li key={w.adapter.name}>

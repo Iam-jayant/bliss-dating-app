@@ -34,7 +34,7 @@ export function AleoWalletProvider({ children }: AleoWalletProviderProps) {
       wallets={wallets}
       network={Network.TESTNET}
       decryptPermission={DecryptPermission.UponRequest}
-      autoConnect={true}
+      autoConnect={false}
       onError={(error) => console.error('Wallet error:', error)}
     >
       <WalletModalProvider>

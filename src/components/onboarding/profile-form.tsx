@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import { useWallet } from '@provablehq/aleo-wallet-adaptor-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -15,10 +16,12 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { CheckCircle2, X } from 'lucide-react';
-import { createProfile, uploadProfileImage } from '@/lib/storage/profile';
+import { updateProfile, uploadProfileImage } from '@/lib/storage/profile';
 import type { BioPromptType, DatingIntent } from '@/lib/storage/types';
 import { ProfilePreview } from './profile-preview';
 import { MultiPhotoUpload } from '@/components/profile/multi-photo-upload';
+import { profileService } from '@/lib/storage/profile-service';
+import { getProfileEncryptionSecret } from '@/lib/security/profile-secret';
 
 interface ProfileFormProps {
   walletAddress: string;
@@ -26,6 +29,8 @@ interface ProfileFormProps {
 }
 
 export function ProfileForm({ walletAddress, onSuccess }: ProfileFormProps) {
+  const { executeTransaction, requestRecords } = useWallet();
+
   // Form state
   const [name, setName] = useState('');
   const [photos, setPhotos] = useState<File[]>([]);
@@ -97,19 +102,60 @@ export function ProfileForm({ walletAddress, onSuccess }: ProfileFormProps) {
       setLoading(true);
       setError('');
 
-      // Upload all photos
-      const uploadPromises = photos.map(photo => uploadProfileImage(photo));
-      const photoPaths = await Promise.all(uploadPromises);
+      const [primaryPhoto, ...additionalPhotos] = photos;
+      if (!primaryPhoto) {
+        throw new Error('At least one profile photo is required.');
+      }
 
-      // Create profile with first photo as main image
-      await createProfile(walletAddress, {
-        name: name.trim(),
-        profile_image_path: photoPaths[0],
-        bio: bio.trim(),
-        bio_prompt_type: bioPrompt,
-        interests,
-        dating_intent: datingIntent,
-      });
+      const encryptionSecret = await getProfileEncryptionSecret(walletAddress);
+      const locationGeohash = 0;
+      const walletAdapter = executeTransaction
+        ? {
+          publicKey: walletAddress,
+          requestTransaction: async (opts: {
+            program: string;
+            function: string;
+            inputs: string[];
+            fee: number;
+            privateFee: boolean;
+          }) => {
+            const result = await executeTransaction(opts);
+            if (!result?.transactionId) {
+              throw new Error('Profile transaction was rejected by the wallet.');
+            }
+            return { transactionId: result.transactionId };
+          },
+          requestRecords: async (programId: string) => {
+            if (!requestRecords) return [];
+            const records = await requestRecords(programId);
+            return records as Array<{ plaintext: string; data?: Record<string, string> }>;
+          },
+        }
+        : undefined;
+
+      await profileService.createProfile(
+        walletAddress,
+        encryptionSecret,
+        {
+          name: name.trim(),
+          bio: bio.trim(),
+          bioPromptType: bioPrompt,
+          interests,
+          datingIntent,
+          profileImage: primaryPhoto,
+        },
+        locationGeohash,
+        walletAdapter,
+      );
+
+      if (additionalPhotos.length > 0) {
+        const additionalImageCids = await Promise.all(
+          additionalPhotos.map((photo) => uploadProfileImage(photo, walletAddress)),
+        );
+        await updateProfile(walletAddress, {
+          additional_images: additionalImageCids,
+        });
+      }
 
       onSuccess();
     } catch (err) {

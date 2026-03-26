@@ -1,6 +1,9 @@
 [workspace]
 members = [
-    "contracts/age_verification"
+    "contracts/age_verification",
+    "contracts/profile_verification",
+    "contracts/compatibility_matching",
+    "contracts/subscription_access"
 ]
 
 [workspace.dependencies]
