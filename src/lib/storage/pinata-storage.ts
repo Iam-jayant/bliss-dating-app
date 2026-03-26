@@ -5,6 +5,8 @@
  */
 
 import axios from 'axios';
+import { getPublicIdentity, signCanonicalPayload } from '@/lib/security/local-identity';
+import { hashWalletAddress } from '@/lib/wallet-hash';
 
 export interface ProfileData {
   name: string;
@@ -35,21 +37,15 @@ interface EncryptedData {
  * Get free API key at: https://app.pinata.cloud/
  */
 export class PinataStorageService {
-  private jwt: string = '';
   private gateway: string = 'gateway.pinata.cloud';
 
   async initialize() {
-    this.jwt = process.env.NEXT_PUBLIC_PINATA_JWT || '';
     this.gateway = process.env.NEXT_PUBLIC_PINATA_GATEWAY || 'gateway.pinata.cloud';
     // If gateway is just an ID (no dots), append .mypinata.cloud
     if (this.gateway && !this.gateway.includes('.')) {
       this.gateway = `${this.gateway}.mypinata.cloud`;
     }
-    
-    if (!this.jwt) {
-      throw new Error('Pinata JWT not configured. Get one free at https://app.pinata.cloud/');
-    }
-    
+
     return this;
   }
 
@@ -156,37 +152,51 @@ export class PinataStorageService {
       const profileJson = JSON.stringify(profile);
       const encrypted = await this.encryptData(profileJson, walletSignature);
 
-      // Prepare metadata
-      const metadata = {
-        name: `Bliss Profile - ${walletAddress.slice(0, 8)}`,
-        keyvalues: {
-          app: 'bliss',
-          type: 'profile',
-          owner: walletAddress,
-          encrypted: 'true'
-        }
+      // Relay through server-side API so Pinata JWT never reaches the browser.
+      const walletHash = await hashWalletAddress(walletAddress);
+      const nonce = `${Date.now()}_${Math.random().toString(36).slice(2, 12)}`;
+      const timestamp = Date.now();
+      const proofPayload = {
+        walletHash,
+        nonce,
+        timestamp,
+        payload: encrypted,
       };
+      const signature = await signCanonicalPayload(walletHash, proofPayload);
+      const identity = await getPublicIdentity(walletHash);
 
-      // Create FormData for Pinata upload
-      const formData = new FormData();
-      const blob = new Blob([JSON.stringify(encrypted)], { type: 'application/json' });
-      formData.append('file', blob, `profile-${walletAddress}.json`);
-      formData.append('pinataMetadata', JSON.stringify(metadata));
+      const response = await fetch('/api/ipfs/upload-json', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          payload: encrypted,
+          name: `Bliss Profile - ${walletAddress.slice(0, 8)}`,
+          keyvalues: {
+            app: 'bliss',
+            type: 'profile',
+            owner: walletAddress,
+            encrypted: 'true',
+          },
+          proof: {
+            walletHash,
+            nonce,
+            timestamp,
+            signerPublicKey: identity.signingPublicKey,
+            signature,
+          },
+        }),
+      });
 
-      // Upload to Pinata
-      const response = await axios.post(
-        'https://api.pinata.cloud/pinning/pinFileToIPFS',
-        formData,
-        {
-          headers: {
-            'Authorization': `Bearer ${this.jwt}`,
-            'Content-Type': 'multipart/form-data'
-          }
-        }
-      );
+      if (!response.ok) {
+        const details = await response.text();
+        throw new Error(`Failed to upload profile to IPFS: ${details}`);
+      }
 
-      console.log('✅ Profile uploaded to IPFS:', response.data.IpfsHash);
-      return response.data.IpfsHash; // Returns CID
+      const data = (await response.json()) as { cid: string };
+      console.log('✅ Profile uploaded to IPFS:', data.cid);
+      return data.cid;
     } catch (error) {
       console.error('❌ Error storing profile to Pinata:', error);
       throw error;
@@ -225,32 +235,48 @@ export class PinataStorageService {
    */
   async uploadImage(file: File, walletAddress: string): Promise<string> {
     try {
-      const metadata = {
+      const walletHash = await hashWalletAddress(walletAddress);
+      const nonce = `${Date.now()}_${Math.random().toString(36).slice(2, 12)}`;
+      const timestamp = Date.now();
+      const identity = await getPublicIdentity(walletHash);
+      const metadataForProof = {
+        owner: walletAddress,
+        type: 'image',
         name: `Bliss Image - ${file.name}`,
-        keyvalues: {
-          app: 'bliss',
-          type: 'image',
-          owner: walletAddress
-        }
       };
+      const signature = await signCanonicalPayload(walletHash, {
+        walletHash,
+        nonce,
+        timestamp,
+        metadata: metadataForProof,
+      });
 
       const formData = new FormData();
       formData.append('file', file);
-      formData.append('pinataMetadata', JSON.stringify(metadata));
+      formData.append('owner', walletAddress);
+      formData.append('type', 'image');
+      formData.append('name', metadataForProof.name);
+      formData.append('proof', JSON.stringify({
+        walletHash,
+        nonce,
+        timestamp,
+        signerPublicKey: identity.signingPublicKey,
+        signature,
+      }));
 
-      const response = await axios.post(
-        'https://api.pinata.cloud/pinning/pinFileToIPFS',
-        formData,
-        {
-          headers: {
-            'Authorization': `Bearer ${this.jwt}`,
-            'Content-Type': 'multipart/form-data'
-          }
-        }
-      );
+      const response = await fetch('/api/ipfs/upload-image', {
+        method: 'POST',
+        body: formData,
+      });
 
-      console.log('✅ Image uploaded to IPFS:', response.data.IpfsHash);
-      return response.data.IpfsHash;
+      if (!response.ok) {
+        const details = await response.text();
+        throw new Error(`Failed to upload image to IPFS: ${details}`);
+      }
+
+      const data = (await response.json()) as { cid: string };
+      console.log('✅ Image uploaded to IPFS:', data.cid);
+      return data.cid;
     } catch (error) {
       console.error('❌ Error uploading image to Pinata:', error);
       throw error;
@@ -267,16 +293,45 @@ export class PinataStorageService {
   /**
    * Delete/unpin file from Pinata (optional cleanup)
    */
-  async unpinFile(cid: string): Promise<void> {
+  async unpinFile(cid: string, walletAddress: string): Promise<void> {
     try {
-      await axios.delete(
-        `https://api.pinata.cloud/pinning/unpin/${cid}`,
-        {
-          headers: {
-            'Authorization': `Bearer ${this.jwt}`
-          }
-        }
-      );
+      const walletHash = await hashWalletAddress(walletAddress);
+      const nonce = `${Date.now()}_${Math.random().toString(36).slice(2, 12)}`;
+      const timestamp = Date.now();
+      const identity = await getPublicIdentity(walletHash);
+      const signature = await signCanonicalPayload(walletHash, {
+        walletHash,
+        nonce,
+        timestamp,
+        payload: {
+          cid,
+          owner: walletAddress,
+        },
+      });
+
+      const response = await fetch('/api/ipfs/unpin', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          cid,
+          owner: walletAddress,
+          proof: {
+            walletHash,
+            nonce,
+            timestamp,
+            signerPublicKey: identity.signingPublicKey,
+            signature,
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        const details = await response.text();
+        throw new Error(`Failed to unpin file: ${details}`);
+      }
+
       console.log('✅ File unpinned from IPFS:', cid);
     } catch (error) {
       console.error('❌ Error unpinning file:', error);
@@ -289,15 +344,10 @@ export class PinataStorageService {
    */
   async testConnection(): Promise<boolean> {
     try {
-      const response = await axios.get(
-        'https://api.pinata.cloud/data/testAuthentication',
-        {
-          headers: {
-            'Authorization': `Bearer ${this.jwt}`
-          }
-        }
-      );
-      console.log('✅ Pinata connection successful:', response.data);
+      const response = await fetch('/api/ipfs/test-connection');
+      if (!response.ok) return false;
+      const data = await response.json();
+      console.log('✅ Pinata connection successful:', data);
       return true;
     } catch (error) {
       console.error('❌ Pinata connection failed:', error);
