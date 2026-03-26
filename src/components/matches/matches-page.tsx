@@ -11,7 +11,7 @@ import { useWallet } from '@provablehq/aleo-wallet-adaptor-react';
 import { WalletMultiButton } from '@provablehq/aleo-wallet-adaptor-react-ui';
 import { useRouter } from 'next/navigation';
 import { getProfile, getProfileByHash, getProfileImageUrl } from '@/lib/storage/profile';
-import { getMutualMatches } from '@/lib/matching/compatibility-service';
+import { getUserMatches } from '@/lib/matching/compatibility-service';
 import type { ProfileData } from '@/lib/storage/types';
 
 interface Match {
@@ -52,37 +52,29 @@ export default function MatchesPage() {
         return;
       }
 
-      // Get mutual matches from compatibility service
-      const mutualMatchWallets = getMutualMatches(userProfile.wallet_hash);
+      const mutualMatches = getUserMatches(userProfile.wallet_hash);
       
       // Load full profile data for each match
-      const matchPromises = mutualMatchWallets.map(async (walletHash: string) => {
+      const matchPromises = mutualMatches.map(async (matchRecord) => {
+        const counterpartHash = matchRecord.user1 === userProfile.wallet_hash
+          ? matchRecord.user2
+          : matchRecord.user1;
         try {
-          const matchProfile = await getProfileByHash(walletHash);
+          const matchProfile = await getProfileByHash(counterpartHash);
           if (!matchProfile) return null;
 
-          // Get match timestamp from localStorage
-          const matchKey = `bliss_match_${userProfile.wallet_hash}_${walletHash}`;
-          const matchData = localStorage.getItem(matchKey);
-          const matchedAt = matchData ? JSON.parse(matchData).timestamp : Date.now();
-
-          // Get compatibility score
-          const scoreKey = `bliss_compat_${userProfile.wallet_hash}_${walletHash}`;
-          const scoreData = localStorage.getItem(scoreKey);
-          const compatibilityScore = scoreData ? JSON.parse(scoreData).score : 0;
-
           return {
-            walletAddress: walletHash,
+            walletAddress: counterpartHash,
             name: matchProfile.name,
             bio: matchProfile.bio || '',
             interests: matchProfile.interests || [],
             imageCid: matchProfile.profile_image_path || '',
-            matchedAt,
-            compatibilityScore,
+            matchedAt: matchRecord.timestamp,
+            compatibilityScore: matchRecord.compatibilityScore,
             distance: 0, // Can be calculated from geohash if needed
           };
         } catch (error) {
-          console.error('Failed to load match profile:', walletHash, error);
+          console.error('Failed to load match profile:', counterpartHash, error);
           return null;
         }
       });
@@ -241,7 +233,7 @@ export default function MatchesPage() {
                   <div className="relative aspect-[4/5] bg-secondary">
                     <img
                       src={
-                        !match.imageCid || match.imageCid.startsWith('mock_image_')
+                        !match.imageCid
                           ? `https://api.dicebear.com/9.x/notionists/svg?seed=${encodeURIComponent(match.name)}&backgroundColor=c0aede`
                           : getProfileImageUrl(match.imageCid)
                       }

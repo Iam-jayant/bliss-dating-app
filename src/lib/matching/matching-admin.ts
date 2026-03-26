@@ -1,131 +1,104 @@
 /**
  * Matching Admin Utilities
- * View and manage matching data in development
+ * Debug helper for local development.
  */
 
-import { 
-  getUserMatches, 
+import {
+  clearMatchingData,
   getMatchCount,
-  clearMatchingData 
+  getUserMatches,
 } from './compatibility-service';
+import { getAllMatchesFromStorage, getLikeActions, getPassActions } from '@/lib/storage/gun-storage';
 
-const MATCHES_KEY = 'bliss_matches_v1';
-const LIKES_KEY = 'bliss_likes_v1';
-
-/**
- * Get all likes/passes from storage
- */
-function getAllLikes() {
-  if (typeof window === 'undefined') return [];
-  try {
-    return JSON.parse(localStorage.getItem(LIKES_KEY) || '[]');
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Get all mutual matches
- */
-function getAllMatches() {
-  if (typeof window === 'undefined') return [];
-  try {
-    return JSON.parse(localStorage.getItem(MATCHES_KEY) || '[]');
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Show matching statistics
- */
-export function showMatchingStats() {
-  const likes: any[] = getAllLikes();
-  const matches: any[] = getAllMatches();
-  
-  const likeActions = likes.filter((l: any) => l.action === 'like').length;
-  const passActions = likes.filter((l: any) => l.action === 'pass').length;
-  
-  console.log('\n💕 Matching Statistics:');
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.log(`  Total Likes: ${likeActions}`);
-  console.log(`  Total Passes: ${passActions}`);
-  console.log(`  Mutual Matches: ${matches.length}`);
-  console.log(`  Match Rate: ${likeActions > 0 ? ((matches.length / likeActions) * 100).toFixed(1) : 0}%`);
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-  
+function summarizeActions() {
+  const likes = getLikeActions();
+  const passes = getPassActions();
   return {
-    likes: likeActions,
-    passes: passActions,
-    matches: matches.length,
-    matchRate: likeActions > 0 ? (matches.length / likeActions) * 100 : 0,
+    likes,
+    passes,
+    likeCount: likes.length,
+    passCount: passes.length,
   };
 }
 
-/**
- * List all mutual matches with details
- */
+export function showMatchingStats() {
+  const { likeCount, passCount } = summarizeActions();
+  const matches = getAllMatchesFromStorage();
+  const totalActions = likeCount + passCount;
+  const matchRate = totalActions > 0 ? (matches.length / totalActions) * 100 : 0;
+
+  console.log('\nBliss Matching Statistics');
+  console.log('-------------------------');
+  console.log(`Total likes: ${likeCount}`);
+  console.log(`Total passes: ${passCount}`);
+  console.log(`Mutual matches: ${matches.length}`);
+  console.log(`Match rate: ${matchRate.toFixed(1)}%`);
+  console.log('-------------------------\n');
+
+  return {
+    likes: likeCount,
+    passes: passCount,
+    matches: matches.length,
+    matchRate,
+  };
+}
+
 export function listAllMatches() {
-  const matches: any[] = getAllMatches();
-  
-  console.log(`\n🎉 All Mutual Matches (${matches.length}):`);
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  
-  matches.forEach((match: any, index: number) => {
+  const matches = getAllMatchesFromStorage();
+
+  console.log(`\nMutual Matches (${matches.length})`);
+  console.log('-------------------------');
+  matches.forEach((match, index) => {
     const date = new Date(match.timestamp).toLocaleString();
-    console.log(`\n  Match ${index + 1}:`);
-    console.log(`    User 1: ${match.user1.substring(0, 16)}...`);
-    console.log(`    User 2: ${match.user2.substring(0, 16)}...`);
-    console.log(`    Compatibility: ${match.compatibilityScore}%`);
-    console.log(`    Shared Interests: ${match.sharedInterests.join(', ')}`);
-    console.log(`    Matched: ${date}`);
+    console.log(`Match ${index + 1}`);
+    console.log(`  user1: ${match.user1}`);
+    console.log(`  user2: ${match.user2}`);
+    console.log(`  compatibility: ${match.compatibilityScore}%`);
+    console.log(`  shared interests: ${match.sharedInterests.join(', ') || 'none'}`);
+    console.log(`  matched at: ${date}`);
   });
-  
-  console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-  
+  console.log('-------------------------\n');
+
   return matches;
 }
 
-/**
- * List all likes for a specific user
- */
 export function listUserLikes(walletHash: string) {
-  const likes: any[] = getAllLikes();
-  const userLikes = likes.filter((l: any) => l.from === walletHash);
-  const receivedLikes = likes.filter((l: any) => l.to === walletHash && l.action === 'like');
-  
-  console.log(`\n💗 Likes for ${walletHash.substring(0, 16)}...`);
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.log(`  Sent Likes: ${userLikes.filter((l: any) => l.action === 'like').length}`);
-  console.log(`  Sent Passes: ${userLikes.filter((l: any) => l.action === 'pass').length}`);
-  console.log(`  Received Likes: ${receivedLikes.length}`);
-  console.log(`  Mutual Matches: ${getUserMatches(walletHash).length}`);
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-  
+  const likes = getLikeActions();
+  const passes = getPassActions();
+
+  const sentLikes = likes.filter((entry) => entry.from === walletHash);
+  const sentPasses = passes.filter((entry) => entry.from === walletHash);
+  const receivedLikes = likes.filter((entry) => entry.to === walletHash);
+
+  console.log(`\nLikes for ${walletHash}`);
+  console.log('-------------------------');
+  console.log(`Sent likes: ${sentLikes.length}`);
+  console.log(`Sent passes: ${sentPasses.length}`);
+  console.log(`Received likes: ${receivedLikes.length}`);
+  console.log(`Mutual matches: ${getMatchCount(walletHash)}`);
+  console.log('-------------------------\n');
+
   return {
-    sent: userLikes,
-    received: receivedLikes,
+    sentLikes,
+    sentPasses,
+    receivedLikes,
     matches: getUserMatches(walletHash),
   };
 }
 
-/**
- * Show help for matching commands
- */
 export function matchingHelp() {
   console.log(`
-💕 Bliss Matching Commands:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  blissMatching.showMatchingStats()  - Show overall stats
-  blissMatching.listAllMatches()     - List all mutual matches
-  blissMatching.listUserLikes(hash)  - Show likes for specific user
-  blissMatching.clearMatchingData()  - Clear all matching data
-  blissMatching.matchingHelp()       - Show this help
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  `);
+Bliss Matching Commands:
+-------------------------
+blissMatching.showMatchingStats()  - Show overall stats
+blissMatching.listAllMatches()     - List all mutual matches
+blissMatching.listUserLikes(hash)  - Show likes for a specific user
+blissMatching.clearMatchingData()  - Clear all matching data
+blissMatching.matchingHelp()       - Show this help
+-------------------------
+`);
 }
 
-// Make functions available globally in development
 if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
   (window as any).blissMatching = {
     showMatchingStats,
@@ -134,7 +107,8 @@ if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
     clearMatchingData,
     matchingHelp,
   };
-  console.log('💕 Bliss Matching loaded. Type "blissMatching.matchingHelp()" for commands');
+
+  console.log('Bliss matching helpers loaded. Run blissMatching.matchingHelp() for commands.');
 }
 
 export { clearMatchingData };

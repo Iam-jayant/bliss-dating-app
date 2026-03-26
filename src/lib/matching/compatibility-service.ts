@@ -1,42 +1,53 @@
-/**
- * Real Compatibility Matching Service
- * Calculates compatibility scores based on interests and dating intent
- * NO MOCK/SIMULATION - Uses actual profile data
- */
+import type { ProfileData } from '@/lib/storage/types';
+import {
+  getAllMatchesFromStorage,
+  getLikeActions,
+  getPassActions,
+  getUserMatchesFromStorage,
+  saveLikeAction,
+  saveMutualMatch,
+  type LikeAction,
+  type MutualMatch,
+} from '@/lib/storage/gun-storage';
+import { getPublicIdentity, signCanonicalPayload } from '@/lib/security/local-identity';
+import { BLISS_V3_KEYS } from '@/lib/storage/schema';
 
-import type { ProfileData } from '../storage/types';
-
-// Interest categories mapping (same as in contract)
-const INTEREST_MAP: { [key: string]: number } = {
-  'Coffee': 0,
-  'Hiking': 1,
-  'Photography': 2,
-  'Cooking': 3,
-  'Travel': 4,
-  'Music': 5,
-  'Yoga': 6,
-  'Reading': 7,
-  'Fitness': 8,
-  'Art': 9,
-  'Gaming': 10,
-  'Dancing': 11,
-  'Movies': 12,
-  'Surfing': 13,
-  'Cycling': 14,
-  'Food': 15,
-  'Tech': 16,
-  'Fashion': 17,
-  'Writing': 18,
-  'Sports': 19,
-  'Meditation': 20,
-  'Nature': 21,
-  'Concerts': 22,
-  'Theater': 23,
+const INTEREST_MAP: Record<string, number> = {
+  Coffee: 0,
+  Hiking: 1,
+  Photography: 2,
+  Cooking: 3,
+  Travel: 4,
+  Music: 5,
+  Yoga: 6,
+  Reading: 7,
+  Fitness: 8,
+  Art: 9,
+  Gaming: 10,
+  Dancing: 11,
+  Movies: 12,
+  Surfing: 13,
+  Cycling: 14,
+  Food: 15,
+  Tech: 16,
+  Fashion: 17,
+  Writing: 18,
+  Sports: 19,
+  Meditation: 20,
+  Nature: 21,
+  Concerts: 22,
+  Theater: 23,
 };
 
-/**
- * Convert interests array to bitfield
- */
+function toIntent(intent: string): 'long_term' | 'short_term' | 'casual' | 'friendship' | 'not_sure' {
+  const normalized = intent.trim().toLowerCase().replace(/\s+/g, '_').replace(/-/g, '_');
+  if (normalized === 'long_term') return 'long_term';
+  if (normalized === 'short_term') return 'short_term';
+  if (normalized === 'casual') return 'casual';
+  if (normalized === 'friends' || normalized === 'friendship') return 'friendship';
+  return 'not_sure';
+}
+
 export function interestsToBitfield(interests: string[]): number {
   return interests.reduce((bitfield, interest) => {
     const bit = INTEREST_MAP[interest];
@@ -44,37 +55,16 @@ export function interestsToBitfield(interests: string[]): number {
   }, 0);
 }
 
-/**
- * Count shared interests between two profiles
- */
 export function countSharedInterests(profile1: ProfileData, profile2: ProfileData): number {
-  const shared = profile1.interests.filter((interest: string) => 
-    profile2.interests.includes(interest)
-  );
-  return shared.length;
+  return profile1.interests.filter((interest) => profile2.interests.includes(interest)).length;
 }
 
-/**
- * Get shared interests list
- */
 export function getSharedInterests(profile1: ProfileData, profile2: ProfileData): string[] {
-  return profile1.interests.filter((interest: string) => 
-    profile2.interests.includes(interest)
-  );
+  return profile1.interests.filter((interest) => profile2.interests.includes(interest));
 }
 
-/**
- * Calculate compatibility score based on shared interests
- * Following the logic from compatibility_matching contract
- * 4+ shared: 100%
- * 3 shared: 75%
- * 2 shared: 50%
- * 1 shared: 25%
- * 0 shared: 0%
- */
 export function calculateCompatibilityScore(profile1: ProfileData, profile2: ProfileData): number {
   const sharedCount = countSharedInterests(profile1, profile2);
-  
   if (sharedCount >= 4) return 100;
   if (sharedCount === 3) return 75;
   if (sharedCount === 2) return 50;
@@ -82,37 +72,18 @@ export function calculateCompatibilityScore(profile1: ProfileData, profile2: Pro
   return 0;
 }
 
-/**
- * Check if dating intents are compatible
- */
 export function areIntentsCompatible(intent1: string, intent2: string): boolean {
-  // "Open to explore" is compatible with everything
-  if (intent1 === 'Open to explore' || intent2 === 'Open to explore') {
-    return true;
-  }
-  
-  // "Friends" is compatible with everything except "Short-term" only
-  if (intent1 === 'Friends' && intent2 === 'Short-term') return true;
-  if (intent2 === 'Friends' && intent1 === 'Short-term') return true;
-  if (intent1 === 'Friends' || intent2 === 'Friends') return true;
-  
-  // "Long-term" and "Short-term" are somewhat compatible
-  if ((intent1 === 'Long-term' && intent2 === 'Short-term') ||
-      (intent1 === 'Short-term' && intent2 === 'Long-term')) {
-    return true; // They can still match, but it's noted
-  }
-  
-  // Same intents are always compatible
-  return intent1 === intent2;
+  const a = toIntent(intent1);
+  const b = toIntent(intent2);
+  if (a === 'not_sure' || b === 'not_sure') return true;
+  if (a === 'friendship' || b === 'friendship') return true;
+  if ((a === 'long_term' && b === 'short_term') || (a === 'short_term' && b === 'long_term')) return true;
+  return a === b;
 }
 
-/**
- * Calculate enhanced compatibility with intent weighting
- * Returns score from 0-100
- */
 export function calculateEnhancedCompatibility(
-  currentUser: ProfileData, 
-  targetProfile: ProfileData
+  currentUser: ProfileData,
+  targetProfile: ProfileData,
 ): {
   score: number;
   sharedInterests: string[];
@@ -121,304 +92,151 @@ export function calculateEnhancedCompatibility(
 } {
   const sharedInterests = getSharedInterests(currentUser, targetProfile);
   const sharedCount = sharedInterests.length;
-  const intentCompatible = areIntentsCompatible(
-    currentUser.dating_intent, 
-    targetProfile.dating_intent
-  );
-  
-  // Base score from interests
+  const intentCompatible = areIntentsCompatible(currentUser.dating_intent, targetProfile.dating_intent);
   let score = calculateCompatibilityScore(currentUser, targetProfile);
-  
-  // Adjust based on intent compatibility
+
   if (!intentCompatible) {
-    score = Math.floor(score * 0.7); // 30% penalty for incompatible intents
-  } else if (currentUser.dating_intent === targetProfile.dating_intent && 
-             currentUser.dating_intent !== 'not_sure') {
-    score = Math.min(100, score + 10); // +10 bonus for exact intent match
+    score = Math.floor(score * 0.7);
+  } else if (toIntent(currentUser.dating_intent) === toIntent(targetProfile.dating_intent)
+    && toIntent(currentUser.dating_intent) !== 'not_sure') {
+    score = Math.min(100, score + 10);
   }
-  
+
+  return { score, sharedInterests, sharedCount, intentCompatible };
+}
+
+async function buildSignedAction(
+  fromWalletHash: string,
+  toWalletHash: string,
+  action: LikeAction['action'],
+  onChainReceiptTxId?: string,
+): Promise<LikeAction> {
+  const nonce = `${Date.now()}_${Math.random().toString(36).slice(2, 12)}`;
+  const base: Omit<LikeAction, 'signerPublicKey' | 'signature'> = {
+    id: `${fromWalletHash}_${toWalletHash}_${action}_${Date.now()}`,
+    from: fromWalletHash,
+    to: toWalletHash,
+    action,
+    timestamp: Date.now(),
+    nonce,
+    signerWalletHash: fromWalletHash,
+    ...(onChainReceiptTxId ? { onChainReceiptTxId } : {}),
+  };
+
+  const signature = await signCanonicalPayload(fromWalletHash, base);
+  const identity = await getPublicIdentity(fromWalletHash);
   return {
-    score,
-    sharedInterests,
-    sharedCount,
-    intentCompatible,
+    ...base,
+    signerPublicKey: identity.signingPublicKey,
+    signature,
   };
 }
 
-/**
- * Match storage in localStorage (real matching, not simulation)
- */
-const LIKES_STORAGE_KEY = 'bliss_likes_v2';
-const MATCHES_STORAGE_KEY = 'bliss_matches_v2';
-const PASSES_STORAGE_KEY = 'bliss_passes_v2';
-
-interface LikeRecord {
-  from: string;
-  to: string;
-  timestamp: number;
-  action: 'like' | 'superlike';
-}
-
-interface MatchRecord {
-  user1: string;
-  user2: string;
-  timestamp: number;
-  compatibility: number;
-}
-
-/**
- * Get all likes received by a user (for "Who Liked You" premium feature)
- */
-export function getLikesReceived(userAddress: string): any[] {
-  const likes = getLikes();
-  return likes.filter(l => l.to === userAddress);
-}
-
-// Storage helpers
-function getLikesStorage(): LikeRecord[] {
-  try {
-    return JSON.parse(localStorage.getItem(LIKES_STORAGE_KEY) || '[]');
-  } catch {
-    return [];
-  }
-}
-
-function getMatchesStorage(): MatchRecord[] {
-  try {
-    return JSON.parse(localStorage.getItem(MATCHES_STORAGE_KEY) || '[]');
-  } catch {
-    return [];
-  }
-}
-
-function getPassesStorage(): any[] {
-  try {
-    return JSON.parse(localStorage.getItem(PASSES_STORAGE_KEY) || '[]');
-  } catch {
-    return [];
-  }
-}
-const MATCHES_KEY = 'bliss_matches_v1';
-const LIKES_KEY = 'bliss_likes_v1';
-
-interface MatchAction {
-  from: string;
-  to: string;
-  action: 'like' | 'pass' | 'superlike';
-  timestamp: number;
-  interests?: string[];
-}
-
-interface MutualMatch {
-  user1: string;
-  user2: string;
-  timestamp: number;
-  compatibilityScore: number;
-  sharedInterests: string[];
-}
-
-/**
- * Get all likes/passes from storage
- */
-function getLikes(): MatchAction[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    return JSON.parse(localStorage.getItem(LIKES_KEY) || '[]');
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Save likes/passes
- */
-function saveLikes(likes: MatchAction[]): void {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem(LIKES_KEY, JSON.stringify(likes));
-}
-
-/**
- * Get all mutual matches
- */
-function getMatches(): MutualMatch[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    return JSON.parse(localStorage.getItem(MATCHES_KEY) || '[]');
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Save mutual matches
- */
-function saveMatches(matches: MutualMatch[]): void {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem(MATCHES_KEY, JSON.stringify(matches));
-}
-
-/**
- * Record a like action (real, stored locally)
- * Supports both regular likes and superlikes
- */
-export function recordLike(
-  fromWallet: string, 
-  toWallet: string, 
-  isSuperLike: boolean = false
-): void {
-  const likes = getLikes();
-  
-  // Remove any existing action from this user to target
-  const filtered = likes.filter(like => 
-    !(like.from === fromWallet && like.to === toWallet)
+export async function recordLike(
+  fromWalletHash: string,
+  toWalletHash: string,
+  isSuperLike = false,
+  onChainReceiptTxId?: string,
+): Promise<void> {
+  const action = await buildSignedAction(
+    fromWalletHash,
+    toWalletHash,
+    isSuperLike ? 'superlike' : 'like',
+    onChainReceiptTxId,
   );
-  
-  filtered.push({
-    from: fromWallet,
-    to: toWallet,
-    action: isSuperLike ? 'superlike' : 'like',
-    timestamp: Date.now(),
-    interests: [],
-  });
-  
-  saveLikes(filtered);
-  console.log(`💗 ${isSuperLike ? 'Super ' : ''}Like recorded: ${fromWallet.slice(0, 8)} → ${toWallet.slice(0, 8)}`);
+  await saveLikeAction(action);
 }
 
-/**
- * Record a pass action (real, stored locally)
- */
-export function recordPass(
-  fromWallet: string, 
-  toWallet: string
-): void {
-  const likes = getLikes();
-  
-  // Remove any existing action from this user to target
-  const filtered = likes.filter(like => 
-    !(like.from === fromWallet && like.to === toWallet)
+export async function recordPass(
+  fromWalletHash: string,
+  toWalletHash: string,
+  onChainReceiptTxId?: string,
+): Promise<void> {
+  const action = await buildSignedAction(fromWalletHash, toWalletHash, 'pass', onChainReceiptTxId);
+  await saveLikeAction(action);
+}
+
+function findLike(fromWallet: string, toWallet: string): LikeAction | undefined {
+  return getLikeActions().find(
+    (entry) => entry.from === fromWallet && entry.to === toWallet && (entry.action === 'like' || entry.action === 'superlike'),
   );
-  
-  filtered.push({
-    from: fromWallet,
-    to: toWallet,
-    action: 'pass',
-    timestamp: Date.now(),
-  });
-  
-  saveLikes(filtered);
-  console.log(`👎 Pass recorded: ${fromWallet.slice(0, 8)} → ${toWallet.slice(0, 8)}`);
 }
 
-/**
- * Check if there's a mutual match (REAL CHECK, NOT RANDOM)
- */
-export function checkMutualMatch(
+function hasMutualRecord(userA: string, userB: string): boolean {
+  return getAllMatchesFromStorage().some((match) => (
+    (match.user1 === userA && match.user2 === userB) || (match.user1 === userB && match.user2 === userA)
+  ));
+}
+
+export async function checkMutualMatch(
   fromWallet: string,
   toWallet: string,
   fromProfile: ProfileData,
-  toProfile: ProfileData
-): boolean {
-  const likes = getLikes();
-  
-  // Check if I liked them (regular like or superlike)
-  const myLike = likes.find(like => 
-    like.from === fromWallet && 
-    like.to === toWallet && 
-    (like.action === 'like' || like.action === 'superlike')
-  );
-  
-  // Check if they liked me (regular like or superlike)
-  const theirLike = likes.find(like => 
-    like.from === toWallet && 
-    like.to === fromWallet && 
-    (like.action === 'like' || like.action === 'superlike')
-  );
-  
-  if (myLike && theirLike) {
-    // It's a mutual match! Create match record
-    const compatibility = calculateEnhancedCompatibility(fromProfile, toProfile);
-    
-    const matches = getMatches();
-    
-    // Check if match already exists
-    const existingMatch = matches.find(m => 
-      (m.user1 === fromWallet && m.user2 === toWallet) ||
-      (m.user1 === toWallet && m.user2 === fromWallet)
-    );
-    
-    if (!existingMatch) {
-      matches.push({
-        user1: fromWallet,
-        user2: toWallet,
-        timestamp: Date.now(),
-        compatibilityScore: compatibility.score,
-        sharedInterests: compatibility.sharedInterests,
-      });
-      saveMatches(matches);
-      console.log(`🎉 MUTUAL MATCH: ${fromWallet.slice(0, 8)} ↔ ${toWallet.slice(0, 8)} (${compatibility.score}% compatible)`);
-    }
-    
-    return true;
-  }
-  
-  return false;
+  toProfile: ProfileData,
+): Promise<boolean> {
+  const myLike = findLike(fromWallet, toWallet);
+  const theirLike = findLike(toWallet, fromWallet);
+  if (!myLike || !theirLike) return false;
+  if (hasMutualRecord(fromWallet, toWallet)) return true;
+
+  const compatibility = calculateEnhancedCompatibility(fromProfile, toProfile);
+  const nonce = `${Date.now()}_${Math.random().toString(36).slice(2, 12)}`;
+  const baseMatch = {
+    id: [fromWallet, toWallet].sort().join('_'),
+    user1: fromWallet,
+    user2: toWallet,
+    timestamp: Date.now(),
+    nonce,
+    signerWalletHash: fromWallet,
+    compatibilityScore: compatibility.score,
+    sharedInterests: compatibility.sharedInterests,
+  };
+  const signature = await signCanonicalPayload(fromWallet, baseMatch);
+  const identity = await getPublicIdentity(fromWallet);
+  const signedMatch: MutualMatch = {
+    ...baseMatch,
+    signerPublicKey: identity.signingPublicKey,
+    signature,
+  };
+
+  await saveMutualMatch(signedMatch);
+  return true;
 }
 
-/**
- * Get all matches for a user
- */
-export function getUserMatches(walletAddress: string): MutualMatch[] {
-  const matches = getMatches();
-  return matches.filter(m => 
-    m.user1 === walletAddress || m.user2 === walletAddress
-  );
+export function getUserMatches(walletHash: string): MutualMatch[] {
+  return getUserMatchesFromStorage(walletHash);
 }
 
-/**
- * Get mutual match wallet addresses for a user
- */
-export function getMutualMatches(walletAddress: string): string[] {
-  const matches = getUserMatches(walletAddress);
-  return matches.map(m => 
-    m.user1 === walletAddress ? m.user2 : m.user1
-  );
+export function getMutualMatches(walletHash: string): string[] {
+  return getUserMatches(walletHash).map((match) => (match.user1 === walletHash ? match.user2 : match.user1));
 }
 
-/**
- * Get match count for stats
- */
-export function getMatchCount(walletAddress: string): number {
-  return getUserMatches(walletAddress).length;
+export function getMatchCount(walletHash: string): number {
+  return getUserMatches(walletHash).length;
 }
 
-/**
- * Check if user has already acted on a profile
- */
-export function hasActedOn(fromWallet: string, toWallet: string): boolean {
-  const likes = getLikes();
-  return likes.some(like => 
-    like.from === fromWallet && like.to === toWallet
-  );
+export function hasActedOn(fromWalletHash: string, toWalletHash: string): boolean {
+  return getLikeActions().some((action) => action.from === fromWalletHash && action.to === toWalletHash)
+    || getPassActions().some((action) => action.from === fromWalletHash && action.to === toWalletHash);
 }
 
-/**
- * Get user's action on a specific profile
- */
-export function getActionOn(fromWallet: string, toWallet: string): 'like' | 'pass' | 'superlike' | null {
-  const likes = getLikes();
-  const action = likes.find(like => 
-    like.from === fromWallet && like.to === toWallet
-  );
-  return action?.action || null;
+export function getActionOn(
+  fromWalletHash: string,
+  toWalletHash: string,
+): 'like' | 'pass' | 'superlike' | null {
+  const like = getLikeActions().find((action) => action.from === fromWalletHash && action.to === toWalletHash);
+  if (like) return like.action;
+  const pass = getPassActions().find((action) => action.from === fromWalletHash && action.to === toWalletHash);
+  return pass?.action || null;
 }
 
-/**
- * Clear all matching data (for testing/reset)
- */
+export function getLikesReceived(userWalletHash: string): LikeAction[] {
+  return getLikeActions().filter((like) => like.to === userWalletHash);
+}
+
 export function clearMatchingData(): void {
   if (typeof window === 'undefined') return;
-  localStorage.removeItem(MATCHES_KEY);
-  localStorage.removeItem(LIKES_KEY);
-  console.log('🗑️ All matching data cleared');
+  localStorage.removeItem(BLISS_V3_KEYS.likes);
+  localStorage.removeItem(BLISS_V3_KEYS.matches);
+  localStorage.removeItem(BLISS_V3_KEYS.passes);
 }

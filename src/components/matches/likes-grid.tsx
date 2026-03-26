@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Heart, Lock, Sparkles } from 'lucide-react';
 import { useWallet } from '@provablehq/aleo-wallet-adaptor-react';
-import { getProfileByHash } from '@/lib/storage/profile';
+import { getProfileByHash, getProfileImageUrl } from '@/lib/storage/profile';
 import { getLikesReceived } from '@/lib/matching/compatibility-service';
 import type { ProfileData } from '@/lib/storage/types';
 import { useSubscription } from '@/hooks/use-subscription';
@@ -22,19 +22,36 @@ interface LikeWithProfile {
 export function LikesGrid() {
   const { address: publicKey } = useWallet();
   const { canSeeLikes, refresh } = useSubscription();
+  const [myWalletHash, setMyWalletHash] = useState<string>('');
   const [likes, setLikes] = useState<LikeWithProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [showUpgrade, setShowUpgrade] = useState(false);
 
   useEffect(() => {
-    loadLikes();
+    (async () => {
+      if (!publicKey) {
+        setMyWalletHash('');
+        return;
+      }
+      const { hashWalletAddress } = await import('@/lib/wallet-hash');
+      setMyWalletHash(await hashWalletAddress(publicKey));
+    })();
   }, [publicKey]);
 
+  useEffect(() => {
+    loadLikes();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myWalletHash]);
+
   const loadLikes = async () => {
-    if (!publicKey) return;
+    if (!myWalletHash) {
+      setLikes([]);
+      setLoading(false);
+      return;
+    }
 
     try {
-      const receivedLikes = await getLikesReceived(publicKey);
+      const receivedLikes = getLikesReceived(myWalletHash);
       
       const likesWithProfiles = await Promise.all(
         receivedLikes.map(async (like) => {
@@ -103,7 +120,7 @@ export function LikesGrid() {
             <div className="absolute inset-0">
               {like.profile?.profile_image_path ? (
                 <Image
-                  src={like.profile.profile_image_path}
+                  src={getProfileImageUrl(like.profile.profile_image_path)}
                   alt={like.profile.name || 'User'}
                   fill
                   className={`object-cover ${!canSeeLikes ? 'blur-lg' : ''}`}

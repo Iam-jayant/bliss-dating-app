@@ -5,7 +5,7 @@
  * - Sender identity: uses wallet_hash consistently (not raw publicKey)
  * - Real-time: integrates Gun.js for P2P message delivery
  * - Proper read receipts
- * - Image display uses DiceBear fallback for mock profiles
+ * - End-to-end encrypted payloads with signed envelopes
  */
 
 'use client';
@@ -22,9 +22,15 @@ import { WalletMultiButton } from '@provablehq/aleo-wallet-adaptor-react-ui';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { getProfile, getProfileByHash, getProfileImageUrl } from '@/lib/storage/profile';
 import { getMutualMatches } from '@/lib/matching/compatibility-service';
-import { seedDemoData } from '@/lib/seed-profiles';
 import { useSubscription } from '@/hooks/use-subscription';
 import { SubscriptionModal } from '@/components/subscription/subscription-modal';
+import {
+  decryptMessageForViewer,
+  encryptForParticipants,
+  getPublicIdentity,
+  signCanonicalPayload,
+  verifyCanonicalPayload,
+} from '@/lib/security/local-identity';
 import {
   saveMessage,
   getChatMessages,
@@ -37,13 +43,14 @@ interface Chat {
   walletHash: string;
   name: string;
   imageCid: string;
-  lastMessage: ChatMessage | undefined;
+  lastMessagePreview: string | undefined;
+  lastMessageTime: number | undefined;
   unreadCount: number;
 }
 
-/** Get a display image for any profile (handles mock, IPFS, local, missing) */
+/** Resolve a profile image URL for display */
 function getDisplayImage(imageCid: string, name: string): string {
-  if (!imageCid || imageCid.startsWith('mock_image_')) {
+  if (!imageCid) {
     return `https://api.dicebear.com/9.x/notionists/svg?seed=${encodeURIComponent(name)}&backgroundColor=c0aede`;
   }
   if (imageCid.startsWith('local:') || imageCid.startsWith('data:')) {
@@ -62,12 +69,13 @@ export default function MessagesPage() {
   const [myHash, setMyHash] = useState<string>('');
   const [chats, setChats] = useState<Chat[]>([]);
   const [selectedChat, setSelectedChat] = useState<string | null>(chatWith);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<Array<ChatMessage & { decryptedContent: string }>>([]);
   const [messageInput, setMessageInput] = useState('');
   const [loading, setLoading] = useState(true);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const unsubscribeRef = useRef<(() => void) | null>(null);
+  const MAX_FUTURE_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
   // Resolve my wallet hash once
   useEffect(() => {
@@ -82,6 +90,40 @@ export default function MessagesPage() {
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
+
+  const decryptMessage = useCallback(async (message: ChatMessage): Promise<string> => {
+    if (message.signerWalletHash !== message.senderId) return '[Invalid sender binding]';
+    if (message.timestamp > Date.now() + MAX_FUTURE_CLOCK_SKEW_MS) return '[Invalid timestamp]';
+
+    const payload = {
+      id: message.id,
+      senderId: message.senderId,
+      recipientId: message.recipientId,
+      content: message.content,
+      timestamp: message.timestamp,
+      nonce: message.nonce,
+      signerWalletHash: message.signerWalletHash,
+      encrypted: message.encrypted,
+      read: message.read,
+      iv: message.iv,
+      senderEncryptedKey: message.senderEncryptedKey,
+      recipientEncryptedKey: message.recipientEncryptedKey,
+    };
+
+    const isSignatureValid = await verifyCanonicalPayload(
+      message.signerPublicKey,
+      payload,
+      message.signature,
+    );
+
+    if (!isSignatureValid) return '[Invalid signature]';
+
+    try {
+      return await decryptMessageForViewer(myHash, message);
+    } catch {
+      return '[Unable to decrypt]';
+    }
+  }, [myHash]);
 
   // Load chats when hash is ready
   useEffect(() => {
@@ -104,11 +146,17 @@ export default function MessagesPage() {
         if (unsubscribeRef.current) {
           unsubscribeRef.current();
         }
-        const unsub = await subscribeToChat(myHash, selectedChat, (newMsg) => {
-          setMessages(prev => {
-            if (prev.find(m => m.id === newMsg.id)) return prev;
-            return [...prev, newMsg].sort((a, b) => a.timestamp - b.timestamp);
+        const unsub = await subscribeToChat(myHash, selectedChat, async (newMsg) => {
+          const decryptedContent = await decryptMessage(newMsg);
+          setMessages((prev) => {
+            if (prev.find((m) => m.id === newMsg.id)) return prev;
+            return [...prev, { ...newMsg, decryptedContent }].sort((a, b) => a.timestamp - b.timestamp);
           });
+          setChats((prev) => prev.map((chat) => (
+            chat.walletHash === selectedChat
+              ? { ...chat, lastMessagePreview: decryptedContent, lastMessageTime: newMsg.timestamp }
+              : chat
+          )));
           scrollToBottom();
         });
         unsubscribeRef.current = unsub;
@@ -122,101 +170,119 @@ export default function MessagesPage() {
       }
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedChat, myHash]);
+  }, [selectedChat, myHash, decryptMessage, scrollToBottom]);
 
   useEffect(() => {
     scrollToBottom();
   }, [messages, scrollToBottom]);
 
-  const loadChats = async () => {
+  const loadChats = useCallback(async () => {
     if (!myHash) return;
-    
+
     setLoading(true);
     try {
-      // Ensure demo data is seeded (idempotent)
-      seedDemoData(myHash);
-
       const mutualMatchHashes = getMutualMatches(myHash);
-      
+
       const chatList: Chat[] = (await Promise.all(
         mutualMatchHashes.map(async (walletHash: string) => {
           const matchProfile = await getProfileByHash(walletHash);
           if (!matchProfile) return null;
 
           const chatMessages = getChatMessages(myHash, walletHash);
-          const lastMessage = chatMessages[chatMessages.length - 1] || undefined;
-          const unreadCount = chatMessages.filter(
-            m => m.recipientId === myHash && !m.read
-          ).length;
+          const lastMessage = chatMessages[chatMessages.length - 1];
+          const unreadCount = chatMessages.filter((m) => m.recipientId === myHash && !m.read).length;
 
           return {
             walletHash,
             name: matchProfile.name,
             imageCid: matchProfile.profile_image_path || '',
-            lastMessage,
+            lastMessagePreview: lastMessage ? await decryptMessage(lastMessage) : undefined,
+            lastMessageTime: lastMessage?.timestamp,
             unreadCount,
           } as Chat;
-        })
-      )).filter((c): c is Chat => c !== null);
+        }),
+      )).filter((chat): chat is Chat => chat !== null);
 
-      // Sort by last message time
-      chatList.sort((a, b) => {
-        const aTime = a.lastMessage?.timestamp || 0;
-        const bTime = b.lastMessage?.timestamp || 0;
-        return bTime - aTime;
-      });
-      
+      chatList.sort((a, b) => (b.lastMessageTime || 0) - (a.lastMessageTime || 0));
       setChats(chatList);
     } catch (error) {
       console.error('Failed to load chats:', error);
     } finally {
       setLoading(false);
     }
-  };
+  }, [decryptMessage, myHash]);
 
-  const loadMessages = (recipientHash: string) => {
+  const loadMessages = useCallback(async (recipientHash: string) => {
     if (!myHash) return;
-    
-    const chatMessages = getChatMessages(myHash, recipientHash);
-    
-    // Mark as read
+    const encryptedMessages = getChatMessages(myHash, recipientHash);
+
     markMessagesRead(myHash, recipientHash, myHash);
-    
-    // Update unread in chat list
-    setChats(prev => prev.map(chat => 
-      chat.walletHash === recipientHash 
-        ? { ...chat, unreadCount: 0 } 
-        : chat
-    ));
-    
-    setMessages(chatMessages);
-  };
+
+    setChats((prev) => prev.map((chat) => (
+      chat.walletHash === recipientHash ? { ...chat, unreadCount: 0 } : chat
+    )));
+
+    const decrypted = await Promise.all(
+      encryptedMessages.map(async (message) => ({
+        ...message,
+        decryptedContent: await decryptMessage(message),
+      })),
+    );
+    setMessages(decrypted);
+  }, [decryptMessage, myHash]);
 
   const sendMessage = async () => {
     if (!myHash || !selectedChat || !messageInput.trim()) return;
-    
-    const newMessage: ChatMessage = {
-      id: `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      senderId: myHash,
-      recipientId: selectedChat,
-      content: messageInput.trim(),
-      timestamp: Date.now(),
-      encrypted: true,
-      read: false,
-    };
+    try {
+      const plaintext = messageInput.trim();
+      const recipientProfile = await getProfileByHash(selectedChat);
+      const recipientPublicKey = recipientProfile?.messaging_public_key;
+      if (!recipientPublicKey) {
+        throw new Error('Recipient has no messaging key published');
+      }
 
-    // Save to Gun.js + localStorage
-    await saveMessage(newMessage);
+      await getPublicIdentity(myHash);
+      const encrypted = await encryptForParticipants(myHash, recipientPublicKey, plaintext);
 
-    setMessages(prev => [...prev, newMessage]);
-    setMessageInput('');
+      const basePayload = {
+        id: `${Date.now()}_${Math.random().toString(36).slice(2, 11)}`,
+        senderId: myHash,
+        recipientId: selectedChat,
+        content: encrypted.content,
+        timestamp: Date.now(),
+        nonce: `${Date.now()}_${Math.random().toString(36).slice(2, 12)}`,
+        signerWalletHash: myHash,
+        encrypted: true as const,
+        read: false,
+        iv: encrypted.iv,
+        senderEncryptedKey: encrypted.senderEncryptedKey,
+        recipientEncryptedKey: encrypted.recipientEncryptedKey,
+      };
 
-    // Update chat list
-    setChats(prev => prev.map(chat => 
-      chat.walletHash === selectedChat 
-        ? { ...chat, lastMessage: newMessage } 
-        : chat
-    ));
+      const identity = await getPublicIdentity(myHash);
+      const signature = await signCanonicalPayload(myHash, basePayload);
+      const newMessage: ChatMessage = {
+        ...basePayload,
+        signerPublicKey: identity.signingPublicKey,
+        signature,
+      };
+
+      await saveMessage(newMessage);
+
+      setMessages((prev) => [
+        ...prev,
+        { ...newMessage, decryptedContent: plaintext },
+      ]);
+      setMessageInput('');
+
+      setChats((prev) => prev.map((chat) => (
+        chat.walletHash === selectedChat
+          ? { ...chat, lastMessagePreview: plaintext, lastMessageTime: newMessage.timestamp }
+          : chat
+      )));
+    } catch (error) {
+      console.error('Failed to send encrypted message:', error);
+    }
   };
 
   const formatMessageTime = (timestamp: number) => {
@@ -333,16 +399,15 @@ export default function MessagesPage() {
                 <div className="flex-1 text-left min-w-0">
                   <div className="flex items-center justify-between mb-1">
                     <span className="font-semibold text-foreground truncate">{chat.name}</span>
-                    {chat.lastMessage && (
+                    {chat.lastMessageTime && (
                       <span className="text-xs text-muted-foreground">
-                        {formatMessageTime(chat.lastMessage.timestamp)}
+                        {formatMessageTime(chat.lastMessageTime)}
                       </span>
                     )}
                   </div>
-                  {chat.lastMessage && (
+                  {chat.lastMessagePreview && (
                     <p className="text-sm text-muted-foreground truncate">
-                      {chat.lastMessage.senderId === myHash ? 'You: ' : ''}
-                      {chat.lastMessage.content}
+                      {chat.lastMessagePreview}
                     </p>
                   )}
                 </div>
@@ -433,7 +498,7 @@ export default function MessagesPage() {
                           : 'bg-card shadow-sm border border-primary/20 text-foreground'
                       }`}
                     >
-                      <p className="text-sm break-words">{message.content}</p>
+                      <p className="text-sm break-words">{message.decryptedContent}</p>
                       <div className={`flex items-center gap-1 mt-1 text-xs ${isOwn ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
                         <span>{formatMessageTime(message.timestamp)}</span>
                         {isOwn && (

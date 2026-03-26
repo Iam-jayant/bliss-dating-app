@@ -1,39 +1,23 @@
 /**
- * Gun.js P2P Decentralized Storage Layer
- * 
- * Replaces localStorage-only storage with a decentralized P2P database.
- * Gun.js provides:
- * - Real-time sync across devices/browsers
- * - No server required (connects to public relay peers)
- * - Offline-first (works without internet, syncs when back online)
- * - Free — no hosting cost
- * - AES encryption built-in via SEA (Security, Encryption, Authorization)
- * 
- * Architecture:
- * - Profiles: gun.get('bliss').get('profiles').get(wallet_hash)
- * - Matches: gun.get('bliss').get('matches').get(match_key)
- * - Messages: gun.get('bliss').get('chats').get(chat_key).get('messages')
- * - Likes: gun.get('bliss').get('likes').get(from_hash)
- * 
- * Privacy: All profile data is encrypted with the user's wallet hash.
- * Messages use per-chat AES keys derived from both users' wallet hashes.
+ * Gun.js decentralized storage (bliss_v3 schema)
+ * - Local cache is the offline source for fast reads
+ * - Gun.js syncs signed/encrypted events across peers
  */
 
-import type { ProfileData } from './types';
+import { BLISS_V3_KEYS } from '@/lib/storage/schema';
+import type { ProfileData } from '@/lib/storage/types';
+import { verifyCanonicalPayload } from '@/lib/security/local-identity';
 
-// Gun.js loaded via CDN script tag to avoid Turbopack/Webpack bundling issues
-// Gun.js uses dynamic require() internally which bundlers can't resolve
 let gunInstance: any = null;
 let gunLoadPromise: Promise<any> | null = null;
+let actionsSubscribed = false;
+let matchesSubscribed = false;
 
 const GUN_PEERS = [
   'https://gun-manhattan.herokuapp.com/gun',
   'https://gun-us.herokuapp.com/gun',
 ];
 
-/**
- * Load Gun.js from CDN (avoids bundler issues with dynamic require)
- */
 function loadGunScript(): Promise<any> {
   if (typeof window === 'undefined') return Promise.resolve(null);
   if ((window as any).Gun) return Promise.resolve((window as any).Gun);
@@ -47,12 +31,8 @@ function loadGunScript(): Promise<any> {
   });
 }
 
-/**
- * Get or create the Gun.js instance (singleton, client-side only)
- */
 async function getGun(): Promise<any> {
   if (typeof window === 'undefined') return null;
-  
   if (gunInstance) return gunInstance;
 
   if (!gunLoadPromise) {
@@ -63,25 +43,18 @@ async function getGun(): Promise<any> {
     const Gun = await gunLoadPromise;
     if (!Gun) return null;
     gunInstance = Gun({ peers: GUN_PEERS, localStorage: true });
-    console.log('🔫 Gun.js initialized with P2P peers');
     return gunInstance;
-  } catch (err) {
-    console.warn('Gun.js init failed, using localStorage fallback:', err);
+  } catch (error) {
+    console.warn('Gun.js init failed, using local cache only:', error);
     return null;
   }
 }
-
-// ─── LOCAL STORAGE HELPERS (always available as cache/fallback) ─────────
-
-const PROFILES_KEY = 'bliss_profiles_v2';
-const LIKES_KEY = 'bliss_likes_v1';
-const MATCHES_KEY = 'bliss_matches_v1';
 
 function getLocalData<T>(key: string, fallback: T): T {
   if (typeof window === 'undefined') return fallback;
   try {
     const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : fallback;
+    return raw ? (JSON.parse(raw) as T) : fallback;
   } catch {
     return fallback;
   }
@@ -92,265 +65,448 @@ function setLocalData(key: string, data: unknown): void {
   localStorage.setItem(key, JSON.stringify(data));
 }
 
-// ─── PROFILE STORAGE ─────────────────────────────────────────────────
+function upsertById<T extends { id: string }>(items: T[], incoming: T): T[] {
+  const idx = items.findIndex((item) => item.id === incoming.id);
+  if (idx === -1) return [...items, incoming];
+  const next = [...items];
+  next[idx] = incoming;
+  return next;
+}
 
-/**
- * Save a profile to both Gun.js and localStorage
- */
+// ---------------------------------------------------------------------------
+// Profiles
+// ---------------------------------------------------------------------------
+
 export async function saveProfile(walletHash: string, profile: ProfileData): Promise<void> {
-  // Always save locally first (fast, offline-capable)
-  const profiles = getLocalData<Record<string, ProfileData>>(PROFILES_KEY, {});
+  const profiles = getLocalData<Record<string, ProfileData>>(BLISS_V3_KEYS.profilesByHash, {});
   profiles[walletHash] = profile;
-  setLocalData(PROFILES_KEY, profiles);
+  setLocalData(BLISS_V3_KEYS.profilesByHash, profiles);
 
-  // Sync to Gun.js P2P network
   try {
     const gun = await getGun();
     if (gun) {
-      gun.get('bliss').get('profiles').get(walletHash).put(JSON.stringify(profile));
+      gun.get('bliss_v3').get('profiles').get(walletHash).put(JSON.stringify(profile));
     }
-  } catch (err) {
-    console.warn('Gun.js profile sync failed (saved locally):', err);
+  } catch (error) {
+    console.warn('Gun profile sync failed:', error);
   }
 }
 
-/**
- * Get profile by wallet_hash (direct lookup, no hashing)
- */
 export function getProfileByHash(walletHash: string): ProfileData | null {
-  const profiles = getLocalData<Record<string, ProfileData>>(PROFILES_KEY, {});
+  const profiles = getLocalData<Record<string, ProfileData>>(BLISS_V3_KEYS.profilesByHash, {});
   return profiles[walletHash] || null;
 }
 
-/**
- * Get all profiles from local cache
- */
 export function getAllLocalProfiles(): ProfileData[] {
-  const profiles = getLocalData<Record<string, ProfileData>>(PROFILES_KEY, {});
+  const profiles = getLocalData<Record<string, ProfileData>>(BLISS_V3_KEYS.profilesByHash, {});
   return Object.values(profiles);
 }
 
-/**
- * Sync profiles from Gun.js network to local cache
- * Call this on app startup to pull latest data
- */
 export async function syncProfilesFromNetwork(): Promise<void> {
   try {
     const gun = await getGun();
     if (!gun) return;
 
-    gun.get('bliss').get('profiles').map().once((data: string, key: string) => {
-      if (!data || data === 'null') return;
+    gun.get('bliss_v3').get('profiles').map().once((raw: string, key: string) => {
+      if (!raw || raw === 'null') return;
       try {
-        const profile: ProfileData = JSON.parse(data);
-        const profiles = getLocalData<Record<string, ProfileData>>(PROFILES_KEY, {});
-        
-        // Only update if newer
+        const profile = JSON.parse(raw) as ProfileData;
+        const profiles = getLocalData<Record<string, ProfileData>>(BLISS_V3_KEYS.profilesByHash, {});
         const existing = profiles[key];
-        if (!existing || (profile.updated_at && existing.updated_at && profile.updated_at > existing.updated_at)) {
+        if (!existing || (profile.updated_at && existing.updated_at && profile.updated_at >= existing.updated_at)) {
           profiles[key] = profile;
-          setLocalData(PROFILES_KEY, profiles);
+          setLocalData(BLISS_V3_KEYS.profilesByHash, profiles);
         }
       } catch {
-        // Skip invalid data
+        // Ignore malformed network payloads
       }
     });
-  } catch (err) {
-    console.warn('Profile sync from network failed:', err);
+  } catch (error) {
+    console.warn('Profile sync failed:', error);
   }
 }
 
-// ─── LIKES / MATCHING STORAGE ────────────────────────────────────────
+// ---------------------------------------------------------------------------
+// Matching events
+// ---------------------------------------------------------------------------
 
 export interface LikeAction {
+  id: string;
   from: string;
   to: string;
   action: 'like' | 'pass' | 'superlike';
   timestamp: number;
-  interests?: string[];
+  nonce: string;
+  signerWalletHash: string;
+  onChainReceiptTxId?: string;
+  signerPublicKey: string;
+  signature: string;
 }
 
+export type SignedLikeEvent = LikeAction;
+
 export interface MutualMatch {
+  id: string;
   user1: string;
   user2: string;
   timestamp: number;
+  nonce: string;
+  signerWalletHash: string;
   compatibilityScore: number;
   sharedInterests: string[];
+  signerPublicKey: string;
+  signature: string;
 }
 
-/**
- * Record a like/pass action and sync to network
- */
-export async function saveLikeAction(action: LikeAction): Promise<void> {
-  // Save locally
-  const likes = getLocalData<LikeAction[]>(LIKES_KEY, []);
-  const filtered = likes.filter(l => !(l.from === action.from && l.to === action.to));
-  filtered.push(action);
-  setLocalData(LIKES_KEY, filtered);
+export type SignedMatchEvent = MutualMatch;
 
-  // Sync to Gun.js
+async function isValidLikeAction(action: LikeAction): Promise<boolean> {
+  if (
+    !action?.id
+    || !action.from
+    || !action.to
+    || !action.signerPublicKey
+    || !action.signature
+    || !action.signerWalletHash
+    || !action.nonce
+  ) {
+    return false;
+  }
+
+  if (action.signerWalletHash !== action.from) return false;
+  if (!isTimestampAcceptable(action.timestamp)) return false;
+
+  const payload = {
+    id: action.id,
+    from: action.from,
+    to: action.to,
+    action: action.action,
+    timestamp: action.timestamp,
+    nonce: action.nonce,
+    signerWalletHash: action.signerWalletHash,
+    ...(action.onChainReceiptTxId ? { onChainReceiptTxId: action.onChainReceiptTxId } : {}),
+  };
+
+  const isValidSignature = await verifyCanonicalPayload(action.signerPublicKey, payload, action.signature);
+  if (!isValidSignature) return false;
+  return consumeNonce(action.signerWalletHash, action.nonce);
+}
+
+async function isValidMutualMatch(match: MutualMatch): Promise<boolean> {
+  if (
+    !match?.id
+    || !match.user1
+    || !match.user2
+    || !match.signerPublicKey
+    || !match.signature
+    || !match.signerWalletHash
+    || !match.nonce
+  ) {
+    return false;
+  }
+
+  if (match.signerWalletHash !== match.user1 && match.signerWalletHash !== match.user2) return false;
+  if (!isTimestampAcceptable(match.timestamp)) return false;
+
+  const payload = {
+    id: match.id,
+    user1: match.user1,
+    user2: match.user2,
+    timestamp: match.timestamp,
+    nonce: match.nonce,
+    signerWalletHash: match.signerWalletHash,
+    compatibilityScore: match.compatibilityScore,
+    sharedInterests: match.sharedInterests,
+  };
+
+  const isValidSignature = await verifyCanonicalPayload(match.signerPublicKey, payload, match.signature);
+  if (!isValidSignature) return false;
+  return consumeNonce(match.signerWalletHash, match.nonce);
+}
+
+async function syncActionFromNetwork(raw: string): Promise<void> {
+  if (!raw || raw === 'null') return;
+  try {
+    const incoming = JSON.parse(raw) as LikeAction;
+    const valid = await isValidLikeAction(incoming);
+    if (!valid) return;
+
+    if (incoming.action === 'pass') {
+      const passes = getLocalData<LikeAction[]>(BLISS_V3_KEYS.passes, []);
+      setLocalData(BLISS_V3_KEYS.passes, upsertById(passes, incoming));
+      return;
+    }
+
+    const likes = getLocalData<LikeAction[]>(BLISS_V3_KEYS.likes, []);
+    setLocalData(BLISS_V3_KEYS.likes, upsertById(likes, incoming));
+  } catch {
+    // Ignore malformed/untrusted network payloads
+  }
+}
+
+async function syncMatchFromNetwork(raw: string): Promise<void> {
+  if (!raw || raw === 'null') return;
+  try {
+    const incoming = JSON.parse(raw) as MutualMatch;
+    const valid = await isValidMutualMatch(incoming);
+    if (!valid) return;
+
+    const matches = getLocalData<MutualMatch[]>(BLISS_V3_KEYS.matches, []);
+    const exists = matches.some((match) => (
+      (match.user1 === incoming.user1 && match.user2 === incoming.user2)
+      || (match.user1 === incoming.user2 && match.user2 === incoming.user1)
+    ));
+    if (!exists) {
+      setLocalData(BLISS_V3_KEYS.matches, [...matches, incoming]);
+    }
+  } catch {
+    // Ignore malformed/untrusted network payloads
+  }
+}
+
+async function subscribeActionsFromNetwork(): Promise<void> {
+  if (actionsSubscribed) return;
+  const gun = await getGun();
+  if (!gun) return;
+
+  actionsSubscribed = true;
+  const ref = gun.get('bliss_v3').get('actions');
+  ref.map().on((raw: string) => {
+    void syncActionFromNetwork(raw);
+  });
+}
+
+async function subscribeMatchesFromNetwork(): Promise<void> {
+  if (matchesSubscribed) return;
+  const gun = await getGun();
+  if (!gun) return;
+
+  matchesSubscribed = true;
+  const ref = gun.get('bliss_v3').get('matches');
+  ref.map().on((raw: string) => {
+    void syncMatchFromNetwork(raw);
+  });
+}
+
+export async function saveLikeAction(action: LikeAction): Promise<void> {
+  if (!(await isValidLikeAction(action))) {
+    throw new Error('Rejected like/pass action with invalid signature.');
+  }
+
+  if (action.action === 'pass') {
+    const passes = getLocalData<LikeAction[]>(BLISS_V3_KEYS.passes, []);
+    setLocalData(BLISS_V3_KEYS.passes, upsertById(passes, action));
+  } else {
+    const likes = getLocalData<LikeAction[]>(BLISS_V3_KEYS.likes, []);
+    setLocalData(BLISS_V3_KEYS.likes, upsertById(likes, action));
+  }
+
   try {
     const gun = await getGun();
     if (gun) {
-      const actionKey = `${action.from}_${action.to}`;
-      gun.get('bliss').get('likes').get(actionKey).put(JSON.stringify(action));
+      gun.get('bliss_v3').get('actions').get(action.id).put(JSON.stringify(action));
     }
-  } catch (err) {
-    console.warn('Gun.js like sync failed:', err);
+  } catch (error) {
+    console.warn('Like/pass sync failed:', error);
   }
 }
 
-/**
- * Get all like actions from local cache
- */
 export function getLikeActions(): LikeAction[] {
-  return getLocalData<LikeAction[]>(LIKES_KEY, []);
+  return getLocalData<LikeAction[]>(BLISS_V3_KEYS.likes, []);
 }
 
-/**
- * Save mutual match
- */
-export async function saveMutualMatch(match: MutualMatch): Promise<void> {
-  const matches = getLocalData<MutualMatch[]>(MATCHES_KEY, []);
-  
-  // Don't duplicate
-  const exists = matches.some(m =>
-    (m.user1 === match.user1 && m.user2 === match.user2) ||
-    (m.user1 === match.user2 && m.user2 === match.user1)
-  );
-  
-  if (!exists) {
-    matches.push(match);
-    setLocalData(MATCHES_KEY, matches);
+export function getPassActions(): LikeAction[] {
+  return getLocalData<LikeAction[]>(BLISS_V3_KEYS.passes, []);
+}
 
-    // Sync to Gun.js
-    try {
-      const gun = await getGun();
-      if (gun) {
-        const matchKey = [match.user1, match.user2].sort().join('_');
-        gun.get('bliss').get('matches').get(matchKey).put(JSON.stringify(match));
-      }
-    } catch (err) {
-      console.warn('Gun.js match sync failed:', err);
+export async function saveMutualMatch(match: MutualMatch): Promise<void> {
+  if (!(await isValidMutualMatch(match))) {
+    throw new Error('Rejected mutual match with invalid signature.');
+  }
+
+  const matches = getLocalData<MutualMatch[]>(BLISS_V3_KEYS.matches, []);
+  const exists = matches.some((m) => (m.user1 === match.user1 && m.user2 === match.user2)
+    || (m.user1 === match.user2 && m.user2 === match.user1));
+  if (!exists) {
+    setLocalData(BLISS_V3_KEYS.matches, [...matches, match]);
+  }
+
+  try {
+    const gun = await getGun();
+    if (gun) {
+      gun.get('bliss_v3').get('matches').get(match.id).put(JSON.stringify(match));
     }
+  } catch (error) {
+    console.warn('Match sync failed:', error);
   }
 }
 
-/**
- * Get all mutual matches for a user
- */
 export function getUserMatchesFromStorage(walletHash: string): MutualMatch[] {
-  const matches = getLocalData<MutualMatch[]>(MATCHES_KEY, []);
-  return matches.filter(m => m.user1 === walletHash || m.user2 === walletHash);
+  const matches = getLocalData<MutualMatch[]>(BLISS_V3_KEYS.matches, []);
+  return matches.filter((m) => m.user1 === walletHash || m.user2 === walletHash);
 }
 
-// ─── MESSAGE STORAGE ─────────────────────────────────────────────────
+export function getAllMatchesFromStorage(): MutualMatch[] {
+  return getLocalData<MutualMatch[]>(BLISS_V3_KEYS.matches, []);
+}
+
+// ---------------------------------------------------------------------------
+// Encrypted chat storage
+// ---------------------------------------------------------------------------
 
 export interface ChatMessage {
   id: string;
-  senderId: string;    // wallet_hash of sender
-  recipientId: string; // wallet_hash of recipient
-  content: string;
+  senderId: string;
+  recipientId: string;
+  content: string; // encrypted payload (base64)
   timestamp: number;
-  encrypted: boolean;
+  nonce: string;
+  signerWalletHash: string;
+  encrypted: true;
   read: boolean;
+  iv: string;
+  senderEncryptedKey: string;
+  recipientEncryptedKey: string;
+  signerPublicKey: string;
+  signature: string;
 }
 
-/**
- * Get chat key for two users (deterministic)
- */
-function getChatKey(user1: string, user2: string): string {
-  return `bliss_messages_${[user1, user2].sort().join('_')}`;
+export type EncryptedMessageEnvelope = ChatMessage;
+
+const NONCE_CACHE_PREFIX = 'bliss_v3_seen_nonces_';
+const MAX_NONCES_PER_SIGNER = 1000;
+const MAX_FUTURE_CLOCK_SKEW_MS = 5 * 60 * 1000;
+
+function nonceCacheKey(signerWalletHash: string): string {
+  return `${NONCE_CACHE_PREFIX}${signerWalletHash}`;
 }
 
-/**
- * Save a message to local storage and Gun.js
- */
+function consumeNonce(signerWalletHash: string, nonce: string): boolean {
+  if (typeof window === 'undefined') return true;
+  const key = nonceCacheKey(signerWalletHash);
+  const seen = getLocalData<string[]>(key, []);
+  if (seen.includes(nonce)) return false;
+  const next = [...seen, nonce].slice(-MAX_NONCES_PER_SIGNER);
+  setLocalData(key, next);
+  return true;
+}
+
+function isTimestampAcceptable(timestamp: number): boolean {
+  const now = Date.now();
+  return timestamp <= now + MAX_FUTURE_CLOCK_SKEW_MS;
+}
+
+async function isValidChatMessage(message: ChatMessage): Promise<boolean> {
+  if (
+    !message?.id
+    || !message.signerPublicKey
+    || !message.signature
+    || !message.signerWalletHash
+    || !message.nonce
+  ) return false;
+
+  if (message.signerWalletHash !== message.senderId) return false;
+  if (!isTimestampAcceptable(message.timestamp)) return false;
+
+  const payload = {
+    id: message.id,
+    senderId: message.senderId,
+    recipientId: message.recipientId,
+    content: message.content,
+    timestamp: message.timestamp,
+    nonce: message.nonce,
+    signerWalletHash: message.signerWalletHash,
+    encrypted: message.encrypted,
+    read: message.read,
+    iv: message.iv,
+    senderEncryptedKey: message.senderEncryptedKey,
+    recipientEncryptedKey: message.recipientEncryptedKey,
+  };
+
+  const isValidSignature = await verifyCanonicalPayload(message.signerPublicKey, payload, message.signature);
+  if (!isValidSignature) return false;
+  return consumeNonce(message.signerWalletHash, message.nonce);
+}
+
+export function getChatStorageKey(user1: string, user2: string): string {
+  return `${BLISS_V3_KEYS.messagesPrefix}${[user1, user2].sort().join('_')}`;
+}
+
 export async function saveMessage(message: ChatMessage): Promise<void> {
-  const chatKey = getChatKey(message.senderId, message.recipientId);
-  
-  // Save locally
-  const messages = getLocalData<ChatMessage[]>(chatKey, []);
-  messages.push(message);
-  setLocalData(chatKey, messages);
+  if (!(await isValidChatMessage(message))) {
+    throw new Error('Rejected chat message with invalid signature.');
+  }
 
-  // Sync to Gun.js for real-time delivery
+  const chatKey = getChatStorageKey(message.senderId, message.recipientId);
+  const existing = getLocalData<ChatMessage[]>(chatKey, []);
+  const updated = upsertById(existing, message).sort((a, b) => a.timestamp - b.timestamp);
+  setLocalData(chatKey, updated);
+
   try {
     const gun = await getGun();
     if (gun) {
-      gun.get('bliss').get('chats').get(chatKey).get(message.id).put(JSON.stringify(message));
+      gun.get('bliss_v3').get('chats').get(chatKey).get(message.id).put(JSON.stringify(message));
     }
-  } catch (err) {
-    console.warn('Gun.js message sync failed:', err);
+  } catch (error) {
+    console.warn('Message sync failed:', error);
   }
 }
 
-/**
- * Get messages for a chat
- */
 export function getChatMessages(user1: string, user2: string): ChatMessage[] {
-  const chatKey = getChatKey(user1, user2);
-  return getLocalData<ChatMessage[]>(chatKey, []);
+  const chatKey = getChatStorageKey(user1, user2);
+  return getLocalData<ChatMessage[]>(chatKey, []).sort((a, b) => a.timestamp - b.timestamp);
 }
 
-/**
- * Mark messages as read
- */
 export function markMessagesRead(user1: string, user2: string, readerHash: string): void {
-  const chatKey = getChatKey(user1, user2);
+  const chatKey = getChatStorageKey(user1, user2);
   const messages = getLocalData<ChatMessage[]>(chatKey, []);
-  const updated = messages.map(m =>
-    m.recipientId === readerHash ? { ...m, read: true } : m
-  );
+  const updated = messages.map((message) => (
+    message.recipientId === readerHash ? { ...message, read: true } : message
+  ));
   setLocalData(chatKey, updated);
 }
 
-/**
- * Subscribe to real-time messages in a chat (Gun.js)
- */
 export async function subscribeToChat(
   user1: string,
   user2: string,
-  onMessage: (message: ChatMessage) => void
+  onMessage: (message: ChatMessage) => void,
 ): Promise<() => void> {
   try {
     const gun = await getGun();
     if (!gun) return () => {};
 
-    const chatKey = getChatKey(user1, user2);
-    const chatRef = gun.get('bliss').get('chats').get(chatKey);
+    const chatKey = getChatStorageKey(user1, user2);
+    const ref = gun.get('bliss_v3').get('chats').get(chatKey);
 
-    chatRef.map().on((data: string, key: string) => {
-      if (!data || data === 'null') return;
-      try {
-        const message: ChatMessage = JSON.parse(data);
-        // Add to local cache if not already there
-        const messages = getLocalData<ChatMessage[]>(chatKey, []);
-        if (!messages.find(m => m.id === message.id)) {
-          messages.push(message);
-          messages.sort((a, b) => a.timestamp - b.timestamp);
-          setLocalData(chatKey, messages);
-          onMessage(message);
+    ref.map().on((raw: string) => {
+      if (!raw || raw === 'null') return;
+      void (async () => {
+        try {
+          const incoming = JSON.parse(raw) as ChatMessage;
+          const valid = await isValidChatMessage(incoming);
+          if (!valid) return;
+
+          const messages = getLocalData<ChatMessage[]>(chatKey, []);
+          const updated = upsertById(messages, incoming).sort((a, b) => a.timestamp - b.timestamp);
+          setLocalData(chatKey, updated);
+          onMessage(incoming);
+        } catch {
+          // Ignore malformed/untrusted network payloads
         }
-      } catch {
-        // Skip invalid data
-      }
+      })();
     });
 
-    // Return unsubscribe function
     return () => {
-      chatRef.off();
+      ref.off();
     };
   } catch {
     return () => {};
   }
 }
 
-/**
- * Initialize Gun.js and sync on app startup
- */
 export async function initializeStorage(): Promise<void> {
   await getGun();
   await syncProfilesFromNetwork();
-  console.log('✅ Decentralized storage initialized');
+  await subscribeActionsFromNetwork();
+  await subscribeMatchesFromNetwork();
 }

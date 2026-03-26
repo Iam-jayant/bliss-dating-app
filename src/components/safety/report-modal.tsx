@@ -13,6 +13,7 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { AlertTriangle, Flag, Shield, MessageCircleWarning, User } from 'lucide-react';
+import { BLISS_V3_KEYS } from '@/lib/storage/schema';
 
 interface ReportModalProps {
   isOpen: boolean;
@@ -91,10 +92,10 @@ export function ReportModal({
       }
 
       // Also store locally for blocking
-      const blockedUsers = JSON.parse(localStorage.getItem('bliss_blocked_users') || '[]');
+      const blockedUsers = JSON.parse(localStorage.getItem(BLISS_V3_KEYS.blockedUsers) || '[]');
       if (!blockedUsers.includes(reportedUserAddress)) {
         blockedUsers.push(reportedUserAddress);
-        localStorage.setItem('bliss_blocked_users', JSON.stringify(blockedUsers));
+        localStorage.setItem(BLISS_V3_KEYS.blockedUsers, JSON.stringify(blockedUsers));
       }
 
       setSubmitted(true);

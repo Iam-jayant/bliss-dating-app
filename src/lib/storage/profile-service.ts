@@ -1,10 +1,14 @@
 /**
- * Profile Service - Replaces Supabase profile operations
- * Uses on-chain Aleo records + IPFS for decentralized storage
+ * Profile Service
+ * - Stores encrypted private payloads on Pinata
+ * - Publishes discoverable profile cards in bliss_v3 storage
+ * - Optionally writes profile attestations on-chain when wallet execution adapters are provided
  */
 
-import { pinataStorage, type ProfileData } from './pinata-storage';
-import { AleoProfileService, aleoProfileService } from '../aleo/profile-service';
+import { pinataStorage, type ProfileData as PinataProfileData } from '@/lib/storage/pinata-storage';
+import { aleoProfileService, type WalletExecutionAdapter } from '@/lib/aleo/profile-service';
+import { createProfile, updateProfile } from '@/lib/storage/profile';
+import type { ProfileData } from '@/lib/storage/types';
 
 export interface ProfileCreateInput {
   name: string;
@@ -19,18 +23,15 @@ export interface ProfileRecord {
   walletAddress: string;
   dataCid: string;
   imageCid: string;
-  interests: number[]; // Interest indices for on-chain matching
-  datingIntent: number; // Intent index
+  interestsBitfield: number;
+  datingIntentIndex: number;
   locationGeohash: number;
-  isVerified: boolean;
+  onChainTxId?: string;
   createdAt: number;
   updatedAt: number;
 }
 
-/**
- * Convert interest strings to bitfield for on-chain storage
- */
-const INTEREST_MAP: { [key: string]: number } = {
+const INTEREST_MAP: Record<string, number> = {
   Travel: 0,
   Fitness: 1,
   Music: 2,
@@ -41,51 +42,51 @@ const INTEREST_MAP: { [key: string]: number } = {
   Outdoors: 7,
 };
 
-const DATING_INTENT_MAP: { [key: string]: number } = {
+const DATING_INTENT_MAP: Record<string, number> = {
+  long_term: 0,
+  short_term: 1,
+  friendship: 2,
+  not_sure: 3,
+  casual: 1,
   'Long-term': 0,
   'Short-term': 1,
   Friends: 2,
   'Open to explore': 3,
 };
 
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error || 'Unknown wallet error');
+}
+
 function interestsToBitfield(interests: string[]): number {
-  return interests.reduce((bitfield, interest) => {
+  return interests.reduce((acc, interest) => {
     const bit = INTEREST_MAP[interest];
-    return bitfield | (1 << bit);
+    return bit !== undefined ? acc | (1 << bit) : acc;
   }, 0);
 }
 
-function bitfieldToInterests(bitfield: number): string[] {
-  const interests: string[] = [];
-  Object.entries(INTEREST_MAP).forEach(([name, bit]) => {
-    if (bitfield & (1 << bit)) {
-      interests.push(name);
-    }
-  });
-  return interests;
+function cidToField(cid: string): bigint {
+  const bytes = new TextEncoder().encode(cid);
+  let hash = 0n;
+  for (let i = 0; i < Math.min(bytes.length, 31); i += 1) {
+    hash = (hash << 8n) | BigInt(bytes[i]);
+  }
+  return hash;
 }
 
 export class ProfileService {
-  private aleoService: AleoProfileService;
-
-  constructor() {
-    this.aleoService = aleoProfileService;
-  }
-
-  /**
-   * Create profile: Upload to IPFS + Create on-chain record
-   */
   async createProfile(
     walletAddress: string,
-    walletSignature: string,
+    encryptionSecret: string,
     profileData: ProfileCreateInput,
-    locationGeohash: number
+    locationGeohash: number,
+    walletAdapter?: WalletExecutionAdapter,
   ): Promise<ProfileRecord> {
-    // 1. Upload profile image to IPFS
-    const imageCid = await pinataStorage.uploadImage(profileData.profileImage, walletAddress);
+    await pinataStorage.initialize();
 
-    // 2. Prepare profile data for IPFS
-    const ipfsProfileData: ProfileData = {
+    const imageCid = await pinataStorage.uploadImage(profileData.profileImage, walletAddress);
+    const privatePayload: PinataProfileData = {
       name: profileData.name,
       bio: profileData.bio,
       bioPromptType: profileData.bioPromptType,
@@ -95,164 +96,130 @@ export class ProfileService {
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
+    const dataCid = await pinataStorage.storeProfile(privatePayload, walletAddress, encryptionSecret);
 
-    // 3. Encrypt and upload profile data to IPFS
-    const dataCid = await pinataStorage.storeProfile(ipfsProfileData, walletAddress, walletSignature);
-
-    // 4. Convert interests to bitfield
+    const intentIndex = DATING_INTENT_MAP[profileData.datingIntent] ?? 3;
     const interestsBitfield = interestsToBitfield(profileData.interests);
-    const intentIndex = DATING_INTENT_MAP[profileData.datingIntent] || 0;
 
-    // 5. Create on-chain profile record via Leo contract
-    // This calls bliss_profile_verification.aleo::create_profile
-    const profileCidField = this.cidToField(dataCid);
-    
-    await this.aleoService.createProfileOnChain(
-      walletAddress,
-      interestsBitfield,
-      intentIndex,
-      locationGeohash,
-      profileCidField
-    );
+    let onChainTxId: string | undefined;
+    if (walletAdapter?.requestTransaction && walletAdapter.publicKey) {
+      onChainTxId = await aleoProfileService.createProfileOnChain(
+        walletAdapter,
+        interestsBitfield,
+        intentIndex,
+        locationGeohash,
+        cidToField(dataCid),
+      );
+    } else {
+      throw new Error('Wallet adapter with transaction support is required for profile creation.');
+    }
 
-    // 6. Return profile record
+    const publicProfile: Partial<ProfileData> = {
+      name: profileData.name,
+      bio: profileData.bio,
+      bio_prompt_type: profileData.bioPromptType as ProfileData['bio_prompt_type'],
+      interests: profileData.interests,
+      dating_intent: (profileData.datingIntent as ProfileData['dating_intent']) || 'not_sure',
+      profile_image_path: imageCid,
+      location_geohash: String(locationGeohash),
+    };
+    await createProfile(walletAddress, publicProfile);
+
     return {
       walletAddress,
       dataCid,
       imageCid,
-      interests: profileData.interests.map(i => INTEREST_MAP[i]),
-      datingIntent: intentIndex,
+      interestsBitfield,
+      datingIntentIndex: intentIndex,
       locationGeohash,
-      isVerified: true,
-      createdAt: ipfsProfileData.createdAt,
-      updatedAt: ipfsProfileData.updatedAt,
+      onChainTxId,
+      createdAt: privatePayload.createdAt,
+      updatedAt: privatePayload.updatedAt,
     };
   }
 
-  /**
-   * Get profile by wallet address
-   */
   async getProfile(
     walletAddress: string,
-    walletSignature: string
-  ): Promise<ProfileData | null> {
+    encryptionSecret: string,
+    dataCid: string,
+  ): Promise<PinataProfileData | null> {
     try {
-      // 1. Get profile CID from on-chain record
-      const profileCid = await this.aleoService.getProfileCid(walletAddress);
-      
-      if (!profileCid) return null;
-
-      // 2. Fetch and decrypt from IPFS
-      const profile = await pinataStorage.retrieveProfile(profileCid, walletAddress, walletSignature);
-
-      return profile;
-    } catch (error) {
-      console.error('Failed to get profile:', error);
+      await pinataStorage.initialize();
+      return await pinataStorage.retrieveProfile(dataCid, walletAddress, encryptionSecret);
+    } catch {
       return null;
     }
   }
 
-  /**
-   * Update profile
-   */
   async updateProfile(
     walletAddress: string,
-    walletSignature: string,
+    encryptionSecret: string,
     updates: Partial<ProfileCreateInput>,
-    locationGeohash?: number
+    locationGeohash: number,
+    walletAdapter?: WalletExecutionAdapter,
   ): Promise<ProfileRecord> {
-    // 1. Get existing profile
-    const existingProfile = await this.getProfile(walletAddress, walletSignature);
-    if (!existingProfile) throw new Error('Profile not found');
+    await pinataStorage.initialize();
+    const existingPublic = await (await import('@/lib/storage/profile')).getProfile(walletAddress);
+    if (!existingPublic) throw new Error('Profile not found');
 
-    // 2. Merge updates
-    const updatedProfileData: ProfileData = {
-      ...existingProfile,
-      ...updates,
-      updatedAt: Date.now(),
+    const merged: Partial<ProfileData> = {
+      ...existingPublic,
+      ...(updates.name ? { name: updates.name } : {}),
+      ...(updates.bio ? { bio: updates.bio } : {}),
+      ...(updates.bioPromptType ? { bio_prompt_type: updates.bioPromptType as ProfileData['bio_prompt_type'] } : {}),
+      ...(updates.interests ? { interests: updates.interests } : {}),
+      ...(updates.datingIntent ? { dating_intent: updates.datingIntent as ProfileData['dating_intent'] } : {}),
+      location_geohash: String(locationGeohash),
     };
 
-    // 3. Upload new image if provided
+    let imageCid = existingPublic.profile_image_path;
     if (updates.profileImage) {
-      const newImageCid = await pinataStorage.uploadImage(updates.profileImage, walletAddress);
-      updatedProfileData.profileImageCid = newImageCid;
+      imageCid = await pinataStorage.uploadImage(updates.profileImage, walletAddress);
+      merged.profile_image_path = imageCid;
     }
 
-    // 4. Encrypt and upload updated data
-    const dataCid = await pinataStorage.storeProfile(updatedProfileData, walletAddress, walletSignature);
+    const privatePayload: PinataProfileData = {
+      name: merged.name || '',
+      bio: merged.bio || '',
+      bioPromptType: (merged.bio_prompt_type as string) || 'interests',
+      interests: merged.interests || [],
+      datingIntent: (merged.dating_intent as string) || 'not_sure',
+      profileImageCid: imageCid,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    const dataCid = await pinataStorage.storeProfile(privatePayload, walletAddress, encryptionSecret);
 
-    // 5. Update on-chain record
-    const interestsBitfield = interestsToBitfield(updatedProfileData.interests);
-    const intentIndex = DATING_INTENT_MAP[updatedProfileData.datingIntent] || 0;
-    const profileCidField = this.cidToField(dataCid);
+    const intentIndex = DATING_INTENT_MAP[privatePayload.datingIntent] ?? 3;
+    const interestsBitfield = interestsToBitfield(privatePayload.interests);
 
-    await this.aleoService.updateProfileOnChain(
-      walletAddress,
-      interestsBitfield,
-      intentIndex,
-      locationGeohash || 0,
-      profileCidField
-    );
+    let onChainTxId: string | undefined;
+    if (walletAdapter?.requestTransaction && walletAdapter.requestRecords && walletAdapter.publicKey) {
+      onChainTxId = await aleoProfileService.updateProfileOnChain(
+        walletAdapter,
+        interestsBitfield,
+        intentIndex,
+        locationGeohash,
+        cidToField(dataCid),
+      );
+    } else {
+      throw new Error('Wallet adapter with transaction and record access is required for profile updates.');
+    }
+
+    await updateProfile(walletAddress, merged);
 
     return {
       walletAddress,
-      dataCid: dataCid,
-      imageCid: updatedProfileData.profileImageCid || '',
-      interests: updatedProfileData.interests.map(i => INTEREST_MAP[i]),
-      datingIntent: intentIndex,
-      locationGeohash: locationGeohash || 0,
-      isVerified: true,
-      createdAt: existingProfile.createdAt,
-      updatedAt: updatedProfileData.updatedAt,
+      dataCid,
+      imageCid,
+      interestsBitfield,
+      datingIntentIndex: intentIndex,
+      locationGeohash,
+      onChainTxId,
+      createdAt: privatePayload.createdAt,
+      updatedAt: privatePayload.updatedAt,
     };
-  }
-
-  /**
-   * Check if profile exists for wallet
-   */
-  async profileExists(walletAddress: string): Promise<boolean> {
-    const cid = await this.aleoService.getProfileCid(walletAddress);
-    return cid !== null;
-  }
-
-  /**
-   * Get profile image URL
-   */
-  getImageUrl(imageCid: string): string {
-    return pinataStorage.getImageUrl(imageCid);
-  }
-
-  /**
-   * Convert IPFS CID to Aleo field element
-   * CIDs are base58 encoded, we need to convert to field
-   */
-  private cidToField(cid: string): bigint {
-    // Simplified: Hash the CID to get a field element
-    // In production, use proper CID to field conversion
-    const encoder = new TextEncoder();
-    const data = encoder.encode(cid);
-    
-    // Create a simple hash (in production, use proper hash function)
-    let hash = 0n;
-    for (let i = 0; i < Math.min(data.length, 31); i++) {
-      hash = (hash << 8n) | BigInt(data[i]);
-    }
-    
-    return hash;
-  }
-
-  /**
-   * Discover nearby profiles (for matching)
-   * Returns wallet addresses of nearby users
-   */
-  async discoverNearbyProfiles(
-    userGeohash: number,
-    maxDistance: number = 50000 // ~50km
-  ): Promise<string[]> {
-    // Query on-chain location_zones mapping
-    return await this.aleoService.getNearbyUsers(userGeohash, maxDistance);
   }
 }
 
-// Export singleton
 export const profileService = new ProfileService();
