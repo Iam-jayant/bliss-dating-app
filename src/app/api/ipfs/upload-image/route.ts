@@ -6,9 +6,9 @@ const MAX_FUTURE_CLOCK_SKEW_MS = 5 * 60 * 1000;
 const PROOF_TTL_MS = 10 * 60 * 1000;
 
 function getPinataJwt(): string {
-  const jwt = process.env.PINATA_JWT;
+  const jwt = process.env.PINATA_JWT || process.env.NEXT_PUBLIC_PINATA_JWT;
   if (!jwt) {
-    throw new Error('PINATA_JWT is not configured on the server');
+    throw new Error('PINATA_JWT is not configured on the server (set server-only PINATA_JWT in .env)');
   }
   return jwt;
 }
