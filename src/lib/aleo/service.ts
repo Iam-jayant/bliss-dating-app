@@ -47,6 +47,12 @@ type AleoServiceWalletAdapter = {
   requestRecords?: (programId: string, includePlaintext?: boolean) => Promise<unknown[]>;
 };
 
+type AgeVerificationProgress =
+  | 'submitting-transaction'
+  | 'waiting-for-confirmation'
+  | 'waiting-for-record'
+  | 'completed';
+
 /**
  * Aleo service for interacting with the age verification contract
  */
@@ -366,7 +372,11 @@ export class AleoService {
    * @param walletAdapter - Connected wallet adapter with requestTransaction method
    * @returns Promise<AgeVerificationResult>
    */
-  async verifyAge(age: number, walletAdapter: AleoServiceWalletAdapter): Promise<AgeVerificationResult> {
+  async verifyAge(
+    age: number,
+    walletAdapter: AleoServiceWalletAdapter,
+    onProgress?: (progress: AgeVerificationProgress) => void,
+  ): Promise<AgeVerificationResult> {
     try {
       if (!walletAdapter?.publicKey) {
         throw new WalletNotConnectedError();
@@ -406,6 +416,7 @@ export class AleoService {
       };
 
       console.log('Requesting transaction from wallet:', txOptions);
+      onProgress?.('submitting-transaction');
 
       // Request transaction from wallet - this should trigger the wallet popup
       const txResponse = await walletAdapter.requestTransaction(txOptions);
@@ -415,6 +426,7 @@ export class AleoService {
         throw new Error('Transaction request failed (no ID returned)');
       }
 
+      onProgress?.('waiting-for-confirmation');
       const tx = await this.waitForConfirmedTransaction(transactionId, walletAdapter);
       const resolvedTransactionId = String((tx as Record<string, unknown>)?.id || transactionId);
       const outputs = this.extractTransitionOutputs(tx);
@@ -422,11 +434,12 @@ export class AleoService {
 
       // Explorer output may omit private records. Fetch latest record from wallet if available.
       if (!record && walletAdapter.requestRecords) {
-        record = await this.waitForVerificationRecord(walletAdapter.requestRecords);
+        onProgress?.('waiting-for-record');
+        record = await this.waitForVerificationRecord(walletAdapter.requestRecords, walletAdapter.publicKey);
       }
 
       if (!record) {
-        throw new Error('Verification record not available after confirmed transaction. Please retry verification.');
+        throw new Error('Verification record is taking longer to index after confirmation. Please retry verification in a few seconds.');
       }
 
       // Validate verification record privacy
@@ -435,6 +448,7 @@ export class AleoService {
       }
 
       privacyLog('Age verification completed successfully');
+      onProgress?.('completed');
 
       return {
         success: true,
@@ -610,13 +624,9 @@ export class AleoService {
       const record = recordOutput.value || recordOutput.record || recordOutput.plaintext || recordOutput;
       const owner = record.owner || record.owner?.value || record['owner.private'];
       const verifiedRaw = record.verified || record.verified?.value || record['verified.private'];
-      const nonce = record.nonce || record._nonce || record['nonce.private'] || `nonce_${Date.now()}`;
-
       return {
         owner: String(owner),
         verified: String(verifiedRaw).includes('true') || verifiedRaw === true,
-        _nonce: String(nonce),
-        _version: 1, // Default version since contract doesn't have version field
       };
 
     } catch (error) {
@@ -651,8 +661,7 @@ export class AleoService {
   private formatRecordInput(record: VerificationRecord): string {
     return `{
       owner: ${record.owner},
-      verified: ${record.verified},
-      nonce: ${record._nonce}
+      verified: ${record.verified}
     }`;
   }
 
@@ -682,7 +691,12 @@ export class AleoService {
 
   private cleanLeoValue(raw: string | undefined): string {
     if (!raw) return '';
-    return raw.trim().replace(/\.(private|public|constant)$/i, '');
+    return raw
+      .trim()
+      .replace(/^['"]|['"]$/g, '')
+      .replace(/\.(private|public|constant)$/i, '')
+      .replace(/,$/, '')
+      .trim();
   }
 
   private async findLatestVerificationPlaintext(
@@ -691,8 +705,19 @@ export class AleoService {
     try {
       const records = await requestRecords(this.programId, true);
       if (!Array.isArray(records) || records.length === 0) return null;
-      const latest = records[records.length - 1] as WalletRecord;
-      return typeof latest?.plaintext === 'string' ? latest.plaintext : null;
+
+      for (let i = records.length - 1; i >= 0; i -= 1) {
+        const record = records[i] as WalletRecord;
+        if (!this.parseWalletVerificationRecord(record)) {
+          continue;
+        }
+
+        if (typeof record?.plaintext === 'string' && record.plaintext.trim()) {
+          return record.plaintext;
+        }
+      }
+
+      return null;
     } catch {
       return null;
     }
@@ -749,42 +774,16 @@ export class AleoService {
 
   private async findLatestVerificationRecord(
     requestRecords: (programId: string, includePlaintext?: boolean) => Promise<unknown[]>,
+    expectedOwner?: string,
   ): Promise<VerificationRecord | undefined> {
     try {
       const records = await requestRecords(this.programId, true);
       if (!Array.isArray(records) || records.length === 0) return undefined;
-      const latest = records[records.length - 1] as WalletRecord;
-      const data = latest?.data || {};
 
-      const ownerFromData = this.cleanLeoValue(data.owner);
-      const verifiedFromData = this.cleanLeoValue(data.verified);
-      const nonceFromData = this.cleanLeoValue(data._nonce || data.nonce);
-
-      if (ownerFromData && nonceFromData) {
-        return {
-          owner: ownerFromData,
-          verified: verifiedFromData.includes('true') || verifiedFromData === '1',
-          _nonce: nonceFromData,
-          _version: 1,
-        };
-      }
-
-      if (typeof latest?.plaintext === 'string') {
-        const ownerMatch = latest.plaintext.match(/owner:\s*([^,\n}]+)/i);
-        const verifiedMatch = latest.plaintext.match(/verified:\s*([^,\n}]+)/i);
-        const nonceMatch = latest.plaintext.match(/(?:_nonce|nonce):\s*([^,\n}]+)/i);
-
-        const owner = this.cleanLeoValue(ownerMatch?.[1]);
-        const verifiedRaw = this.cleanLeoValue(verifiedMatch?.[1]);
-        const nonce = this.cleanLeoValue(nonceMatch?.[1]);
-
-        if (owner && nonce) {
-          return {
-            owner,
-            verified: verifiedRaw.includes('true') || verifiedRaw === '1',
-            _nonce: nonce,
-            _version: 1,
-          };
+      for (let i = records.length - 1; i >= 0; i -= 1) {
+        const parsedRecord = this.parseWalletVerificationRecord(records[i] as WalletRecord, expectedOwner);
+        if (parsedRecord) {
+          return parsedRecord;
         }
       }
     } catch (error) {
@@ -796,12 +795,13 @@ export class AleoService {
 
   private async waitForVerificationRecord(
     requestRecords: (programId: string, includePlaintext?: boolean) => Promise<unknown[]>,
-    attempts = 15,
-    intervalMs = 1200,
+    expectedOwner?: string,
+    attempts = 30,
+    intervalMs = 2000,
   ): Promise<VerificationRecord | undefined> {
     for (let i = 0; i < attempts; i += 1) {
       // eslint-disable-next-line no-await-in-loop
-      const record = await this.findLatestVerificationRecord(requestRecords);
+      const record = await this.findLatestVerificationRecord(requestRecords, expectedOwner);
       if (record?.verified) return record;
       // eslint-disable-next-line no-await-in-loop
       await new Promise((resolve) => setTimeout(resolve, intervalMs));
@@ -873,20 +873,14 @@ export class AleoService {
         }
 
         if (this.isConfirmedStatus(status)) {
-          if (this.isExplorerTransactionId(resolvedId)) {
-            // eslint-disable-next-line no-await-in-loop
-            const explorerTx = await this.fetchExplorerTransaction(resolvedId);
-            if (explorerTx) {
-              return explorerTx;
-            }
-          }
-
+          // Rely on wallet-native status payload first. Explorer endpoints can lag or be unavailable.
           return {
             id: resolvedId,
             status: 'confirmed',
             fee: statusResponse?.fee || '0',
             timestamp: statusResponse?.timestamp || Date.now(),
             walletStatus: statusResponse,
+            transaction: statusResponse?.transaction,
             outputs: statusResponse?.outputs || [],
           };
         }
@@ -941,6 +935,77 @@ export class AleoService {
     }
 
     return outputs;
+  }
+
+  private parseWalletVerificationRecord(
+    record: WalletRecord,
+    expectedOwner?: string,
+  ): VerificationRecord | undefined {
+    const data = record?.data || {};
+    if (this.isNonSimpleVerificationRecord(data, record?.plaintext)) {
+      return undefined;
+    }
+
+    const ownerFromData = this.cleanLeoValue(data.owner);
+    const verifiedFromData = this.cleanLeoValue(data.verified);
+
+    if (ownerFromData && verifiedFromData) {
+      if (expectedOwner && ownerFromData !== expectedOwner) {
+        return undefined;
+      }
+
+      return {
+        owner: ownerFromData,
+        verified: verifiedFromData.includes('true') || verifiedFromData === '1',
+      };
+    }
+
+    if (typeof record?.plaintext === 'string') {
+      const ownerMatch = record.plaintext.match(/owner:\s*([^,\n}]+)/i);
+      const verifiedMatch = record.plaintext.match(/verified:\s*([^,\n}]+)/i);
+      const owner = this.cleanLeoValue(ownerMatch?.[1]);
+      const verifiedRaw = this.cleanLeoValue(verifiedMatch?.[1]);
+
+      if (owner && verifiedRaw) {
+        if (expectedOwner && owner !== expectedOwner) {
+          return undefined;
+        }
+
+        return {
+          owner,
+          verified: verifiedRaw.includes('true') || verifiedRaw === '1',
+        };
+      }
+    }
+
+    return undefined;
+  }
+
+  private isNonSimpleVerificationRecord(
+    data: Record<string, string>,
+    plaintext?: string,
+  ): boolean {
+    const knownNonSimpleFields = [
+      'provider_id',
+      'active',
+      'age_over_18',
+      'issued_at',
+      'expires_at',
+      'revoked',
+      'nonce',
+      'version',
+      'provider_mask',
+    ];
+
+    if (knownNonSimpleFields.some((field) => field in data)) {
+      return true;
+    }
+
+    if (typeof plaintext === 'string') {
+      return /\b(provider_id|active|age_over_18|issued_at|expires_at|revoked|nonce|version|provider_mask)\s*:/i.test(plaintext);
+    }
+
+    return false;
   }
   /**
    * Test a standard transaction (transfer_public) to verify wallet plumbing
