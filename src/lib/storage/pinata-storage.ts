@@ -244,11 +244,14 @@ export class PinataStorageService {
         type: 'image',
         name: `Bliss Image - ${file.name}`,
       };
+      const proofPayload = {
+        metadata: metadataForProof,
+      };
       const signature = await signCanonicalPayload(walletHash, {
         walletHash,
         nonce,
         timestamp,
-        metadata: metadataForProof,
+        payload: proofPayload,
       });
 
       const formData = new FormData();
