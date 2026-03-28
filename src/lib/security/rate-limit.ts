@@ -18,6 +18,8 @@ type RateLimitFile = Record<string, { count: number; expiresAt: number }>;
 
 const rateLimitFilePath = path.join(process.cwd(), '.bliss-cache', 'rate-limits.json');
 let fileLock: Promise<void> = Promise.resolve();
+const inMemoryStore = new Map<string, { count: number; expiresAt: number }>();
+let hasWarnedAboutRedisFallback = false;
 
 function withFileLock<T>(work: () => Promise<T>): Promise<T> {
   const run = fileLock.then(work, work);
@@ -151,6 +153,43 @@ async function consumeViaFile(
   });
 }
 
+function consumeViaMemory(
+  key: string,
+  maxRequests: number,
+  windowSeconds: number,
+): RateLimitResult {
+  const now = Date.now();
+  const windowMs = windowSeconds * 1000;
+
+  for (const [entry, value] of inMemoryStore.entries()) {
+    if (!value || value.expiresAt <= now) {
+      inMemoryStore.delete(entry);
+    }
+  }
+
+  const current = inMemoryStore.get(key);
+  if (!current || current.expiresAt <= now) {
+    inMemoryStore.set(key, {
+      count: 1,
+      expiresAt: now + windowMs,
+    });
+    return {
+      allowed: true,
+      remaining: Math.max(0, maxRequests - 1),
+      resetInSeconds: windowSeconds,
+    };
+  }
+
+  current.count += 1;
+  inMemoryStore.set(key, current);
+
+  return {
+    allowed: current.count <= maxRequests,
+    remaining: Math.max(0, maxRequests - current.count),
+    resetInSeconds: Math.max(0, Math.ceil((current.expiresAt - now) / 1000)),
+  };
+}
+
 export function getClientIp(request: Request): string {
   const forwarded = request.headers.get('x-forwarded-for');
   if (forwarded) {
@@ -168,16 +207,19 @@ export function getClientIp(request: Request): string {
 
 export async function enforceApiRateLimit(input: EnforceApiRateLimitInput): Promise<RateLimitResult> {
   const key = rateLimitKey(input.namespace, input.identifier);
-  const isProduction = process.env.NODE_ENV === 'production';
 
   const redisResult = await tryConsumeViaRedis(key, input.maxRequests, input.windowSeconds);
   if (redisResult) {
     return redisResult;
   }
 
-  if (isProduction) {
-    throw new Error('Rate-limit datastore unavailable: Redis is required in production.');
+  try {
+    return await consumeViaFile(key, input.maxRequests, input.windowSeconds);
+  } catch {
+    if (!hasWarnedAboutRedisFallback) {
+      hasWarnedAboutRedisFallback = true;
+      console.warn('Rate limit fallback active: Redis unavailable; using in-memory counters.');
+    }
+    return consumeViaMemory(key, input.maxRequests, input.windowSeconds);
   }
-
-  return consumeViaFile(key, input.maxRequests, input.windowSeconds);
 }
