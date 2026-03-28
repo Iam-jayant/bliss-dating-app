@@ -26,9 +26,16 @@ import { getProfileEncryptionSecret } from '@/lib/security/profile-secret';
 interface ProfileFormProps {
   walletAddress: string;
   onSuccess: () => void;
+  canSubmit?: boolean;
+  submitDisabledReason?: string;
 }
 
-export function ProfileForm({ walletAddress, onSuccess }: ProfileFormProps) {
+export function ProfileForm({
+  walletAddress,
+  onSuccess,
+  canSubmit = true,
+  submitDisabledReason = '',
+}: ProfileFormProps) {
   const { executeTransaction, requestRecords } = useWallet();
 
   // Form state
@@ -64,6 +71,11 @@ export function ProfileForm({ walletAddress, onSuccess }: ProfileFormProps) {
 
   // Form submission
   const handleSubmit = async () => {
+    if (!canSubmit) {
+      setError(submitDisabledReason || 'Age verification is still in progress. Please wait a moment.');
+      return;
+    }
+
     // Validation
     if (!name.trim()) {
       setError('Name is required');
@@ -332,11 +344,20 @@ export function ProfileForm({ walletAddress, onSuccess }: ProfileFormProps) {
         {/* Submit Button */}
         <Button
           onClick={handleSubmit}
-          disabled={loading}
+          disabled={loading || !canSubmit}
           className="w-full bg-primary hover:bg-primary/90 text-primary-foreground py-7 rounded-full font-semibold shadow-lg hover:shadow-xl transition-all hover:scale-105"
         >
-          {loading ? 'Creating Profile...' : 'Create Profile'}
+          {loading
+            ? 'Creating Profile...'
+            : !canSubmit
+              ? (submitDisabledReason || 'Waiting for age verification...')
+              : 'Create Profile'}
         </Button>
+        {!canSubmit && (
+          <p className="text-xs text-muted-foreground text-center">
+            You can fill your profile now. Submission unlocks automatically once age verification completes.
+          </p>
+        )}
       </div>
 
       {/* Preview Column */}

@@ -306,16 +306,19 @@ export default function SubscriptionManagementPage() {
 
                 <div>
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm text-foreground">Pending swipe settlements</span>
+                    <span className="text-sm text-foreground">Background swipe sync queue</span>
                     <span className="text-sm text-muted-foreground">{pendingSwipeSettlements}</span>
                   </div>
+                  <p className="text-xs text-muted-foreground mb-2">
+                    Swipe settlements sync automatically in the background when your wallet is connected.
+                  </p>
                   <Button
                     variant="outline"
                     className="w-full border-primary/20"
                     disabled={pendingSwipeSettlements === 0 || reconcilingSwipes}
                     onClick={() => { reconcileSwipeSettlements().catch(() => {}); }}
                   >
-                    {reconcilingSwipes ? 'Reconciling...' : 'Reconcile now'}
+                    {reconcilingSwipes ? 'Syncing...' : 'Sync now (manual)'}
                   </Button>
                 </div>
 
@@ -371,4 +374,3 @@ export default function SubscriptionManagementPage() {
     </div>
   );
 }
-

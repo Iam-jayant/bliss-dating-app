@@ -11,9 +11,10 @@ interface WalletSelectionModalProps {
 }
 
 export function WalletSelectionModal({ open, onClose }: WalletSelectionModalProps) {
-    const { wallets, selectWallet, connect, connected } = useWallet();
+    const { wallets, wallet, selectWallet, connect, connected } = useWallet();
     const [connecting, setConnecting] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [pendingWalletName, setPendingWalletName] = useState<string | null>(null);
 
     const sortedWallets = useMemo(() => {
         if (!wallets) return [];
@@ -30,6 +31,61 @@ export function WalletSelectionModal({ open, onClose }: WalletSelectionModalProp
         }
     }, [connected, open, onClose]);
 
+    useEffect(() => {
+        if (!open) {
+            setConnecting(false);
+            setError(null);
+            setPendingWalletName(null);
+        }
+    }, [open]);
+
+    useEffect(() => {
+        if (!open || !pendingWalletName || connected) return;
+        if (wallet?.adapter?.name !== pendingWalletName) return;
+
+        let cancelled = false;
+
+        (async () => {
+            try {
+                await connect(Network.TESTNET);
+                if (cancelled) return;
+                setPendingWalletName(null);
+                onClose();
+            } catch (err) {
+                if (cancelled) return;
+                console.error('Failed to connect wallet:', err);
+                const message = err instanceof Error ? err.message : 'Connection failed';
+                if (message.toLowerCase().includes('wallet not selected')) {
+                    setError('Wallet was not selected in time. Please click your wallet again and approve the connection popup.');
+                } else {
+                    setError(message);
+                }
+                setPendingWalletName(null);
+            } finally {
+                if (!cancelled) {
+                    setConnecting(false);
+                }
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [wallet, pendingWalletName, open, connected, connect, onClose]);
+
+    useEffect(() => {
+        if (!open || !pendingWalletName || connected) return;
+        if (wallet?.adapter?.name === pendingWalletName) return;
+
+        const timeout = window.setTimeout(() => {
+            setConnecting(false);
+            setPendingWalletName(null);
+            setError('Wallet was not selected in time. Please click your wallet again and approve the connection popup.');
+        }, 2000);
+
+        return () => window.clearTimeout(timeout);
+    }, [wallet, pendingWalletName, open, connected]);
+
     if (!open) return null;
 
     const handleWalletClick = async (event: React.MouseEvent, walletName: string) => {
@@ -38,25 +94,7 @@ export function WalletSelectionModal({ open, onClose }: WalletSelectionModalProp
         setConnecting(true);
         try {
             selectWallet(walletName as any);
-            await new Promise((resolve) => setTimeout(resolve, 250));
-
-            try {
-                await connect(Network.TESTNET);
-            } catch (firstConnectError) {
-                const firstMessage = firstConnectError instanceof Error
-                    ? firstConnectError.message.toLowerCase()
-                    : String(firstConnectError).toLowerCase();
-
-                if (!firstMessage.includes('wallet not selected')) {
-                    throw firstConnectError;
-                }
-
-                // Some adapters need one extra event tick after wallet selection.
-                await new Promise((resolve) => setTimeout(resolve, 250));
-                await connect(Network.TESTNET);
-            }
-
-            onClose();
+            setPendingWalletName(walletName);
         } catch (err) {
             console.error('Failed to connect wallet:', err);
             const message = err instanceof Error ? err.message : 'Connection failed';
@@ -65,7 +103,7 @@ export function WalletSelectionModal({ open, onClose }: WalletSelectionModalProp
             } else {
                 setError(message);
             }
-        } finally {
+            setPendingWalletName(null);
             setConnecting(false);
         }
     };

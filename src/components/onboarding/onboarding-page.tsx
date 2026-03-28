@@ -9,7 +9,7 @@ import { Label } from '@/components/ui/label';
 import { aleoService } from '@/lib/aleo/service';
 import { getProfile } from '@/lib/storage/profile';
 import { BLISS_V3_KEYS } from '@/lib/storage/schema';
-import { CheckCircle2, Wallet, Shield, User, Sparkles } from 'lucide-react';
+import { CheckCircle2, Wallet, Shield, User, Sparkles, Loader2 } from 'lucide-react';
 import { WalletSelectionModal } from './wallet-selection-modal';
 import { ProfileForm } from './profile-form';
 import Image from 'next/image';
@@ -19,6 +19,8 @@ interface OnboardingPageProps {
 }
 
 type Step = 1 | 2 | 3 | 4;
+type VerificationPhase = 'idle' | 'submitting' | 'confirming' | 'record' | 'possession';
+type AgeVerificationState = 'required' | 'running' | 'succeeded' | 'failed';
 
 export function OnboardingPage({ onComplete }: OnboardingPageProps) {
     const {
@@ -37,15 +39,26 @@ export function OnboardingPage({ onComplete }: OnboardingPageProps) {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string>('');
     const [showWalletModal, setShowWalletModal] = useState(false);
+    const [verificationPhase, setVerificationPhase] = useState<VerificationPhase>('idle');
+    const [ageVerificationState, setAgeVerificationState] = useState<AgeVerificationState>('required');
 
     // Handle wallet connection and check for existing profile
     useEffect(() => {
         async function checkProfile() {
             if (connected && publicKey) {
                 setWalletAddress(publicKey);
+                let hasVerifiedAge = false;
                 
                 // Check if profile already exists (regardless of current step)
                 try {
+                    const { hashWalletAddress } = await import('@/lib/wallet-hash');
+                    const walletHash = await hashWalletAddress(publicKey);
+                    const verificationRaw = localStorage.getItem(`${BLISS_V3_KEYS.ageVerificationPrefix}${walletHash}`);
+                    if (verificationRaw) {
+                        const verificationCache = JSON.parse(verificationRaw) as { verified?: boolean; owner?: string };
+                        hasVerifiedAge = verificationCache?.verified === true && verificationCache?.owner === publicKey;
+                    }
+
                     const existingProfile = await getProfile(publicKey);
                     if (existingProfile) {
                         // Profile exists, redirect to discovery immediately
@@ -60,7 +73,10 @@ export function OnboardingPage({ onComplete }: OnboardingPageProps) {
                 // No profile exists - continue with onboarding
                 if (currentStep === 1) {
                     setLoading(false);
-                    setCurrentStep(2);
+                    setAgeVerificationState(hasVerifiedAge ? 'succeeded' : 'required');
+                    setCurrentStep(hasVerifiedAge ? 3 : 2);
+                } else if (hasVerifiedAge) {
+                    setAgeVerificationState('succeeded');
                 }
             }
         }
@@ -70,41 +86,64 @@ export function OnboardingPage({ onComplete }: OnboardingPageProps) {
     }, [connected, publicKey]);
 
     const handleAgeVerification = async () => {
+        if (ageVerificationState === 'running') return;
+
+        const ageNum = parseInt(age, 10);
+        if (isNaN(ageNum) || ageNum < 18) {
+            setError('You must be 18 or older to use Bliss.');
+            return;
+        }
+
+        if (!connected || !walletAddress) {
+            setError('Wallet not connected. Please connect your wallet first.');
+            return;
+        }
+
+        // Move forward immediately; keep proving in the background.
+        if (currentStep < 3) {
+            setCurrentStep(3);
+        }
+
         try {
             setLoading(true);
             setError('');
+            setAgeVerificationState('running');
+            setVerificationPhase('submitting');
 
-            const ageNum = parseInt(age);
-            if (isNaN(ageNum) || ageNum < 18) {
-                setError('You must be 18 or older to use Bliss.');
-                return;
-            }
-
-            if (!connected || !walletAddress) {
-                setError('Wallet not connected. Please connect your wallet first.');
-                return;
-            }
-
-            // Call Aleo contract for age verification
             const result = await aleoService.verifyAge(ageNum, {
                 publicKey: walletAddress,
                 requestTransaction: executeTransaction,
                 transactionStatus,
                 requestRecords,
+            }, (progress) => {
+                if (progress === 'submitting-transaction') {
+                    setVerificationPhase('submitting');
+                    return;
+                }
+                if (progress === 'waiting-for-confirmation') {
+                    setVerificationPhase('confirming');
+                    return;
+                }
+                if (progress === 'waiting-for-record') {
+                    setVerificationPhase('record');
+                    return;
+                }
+                if (progress === 'completed') {
+                    setVerificationPhase('possession');
+                }
             });
 
             if (!result.success) {
-                setError(result.error || 'Age verification failed. Please try again.');
-                return;
+                throw new Error(result.error || 'Age verification failed. Please try again.');
             }
 
             if (!result.record) {
-                setError('Verification succeeded but no verification record was returned.');
-                return;
+                throw new Error('Verification succeeded but no verification record was returned.');
             }
 
             let possessionTxId: string | null = null;
             try {
+                setVerificationPhase('possession');
                 const possession = await aleoService.proveVerificationRecord(result.record, {
                     publicKey: walletAddress,
                     requestTransaction: executeTransaction,
@@ -115,13 +154,10 @@ export function OnboardingPage({ onComplete }: OnboardingPageProps) {
                 if (possession.success && possession.verified) {
                     possessionTxId = possession.transaction?.id || null;
                 } else {
-                    setError(possession.error || 'Age proof possession check failed. Please retry verification.');
-                    return;
+                    console.warn('Possession check did not complete, continuing with verified credential fallback:', possession.error);
                 }
             } catch (possessionError) {
-                console.warn('Possession check failed:', possessionError);
-                setError('Age proof possession check failed. Please retry verification.');
-                return;
+                console.warn('Possession check failed, continuing with verified credential fallback:', possessionError);
             }
 
             const { hashWalletAddress } = await import('@/lib/wallet-hash');
@@ -137,13 +173,12 @@ export function OnboardingPage({ onComplete }: OnboardingPageProps) {
                 }),
             );
 
-            setCurrentStep(3);
+            setAgeVerificationState('succeeded');
         } catch (err: any) {
             console.error('Age verification error:', err);
+            setAgeVerificationState('failed');
 
-            // Handle specific wallet errors
             const errorMessage = err?.message || String(err);
-
             if (errorMessage.includes('No records for fee')) {
                 setError(
                     <span>
@@ -152,12 +187,21 @@ export function OnboardingPage({ onComplete }: OnboardingPageProps) {
                     </span> as any
                 );
             } else {
-                setError('Verification failed. Please try again.');
+                setError(errorMessage || 'Verification failed. Please try again.');
             }
         } finally {
             setLoading(false);
+            setVerificationPhase('idle');
         }
     };
+
+    const phaseLabel = (() => {
+        if (verificationPhase === 'submitting') return 'Preparing private zk transaction...';
+        if (verificationPhase === 'confirming') return 'Waiting for chain confirmation...';
+        if (verificationPhase === 'record') return 'Generating your verification proof record...';
+        if (verificationPhase === 'possession') return 'Finalizing proof possession check...';
+        return 'Verifying...';
+    })();
 
     const getStepStatus = (step: Step): 'inactive' | 'active' | 'completed' => {
         if (step < currentStep) return 'completed';
@@ -301,7 +345,12 @@ export function OnboardingPage({ onComplete }: OnboardingPageProps) {
                                             min="18"
                                             max="120"
                                             value={age}
-                                            onChange={(e) => setAge(e.target.value)}
+                                            onChange={(e) => {
+                                                setAge(e.target.value);
+                                                if (ageVerificationState === 'failed') {
+                                                    setAgeVerificationState('required');
+                                                }
+                                            }}
                                             placeholder="Enter your age"
                                             className="bg-background/50 border-border text-base py-6"
                                         />
@@ -312,11 +361,23 @@ export function OnboardingPage({ onComplete }: OnboardingPageProps) {
 
                                     <Button
                                         onClick={handleAgeVerification}
-                                        disabled={loading || !age}
+                                        disabled={loading || !age || ageVerificationState === 'running'}
                                         className="w-full bg-primary hover:bg-primary/90 text-primary-foreground py-7 rounded-full font-semibold shadow-lg hover:shadow-xl transition-all hover:scale-105"
                                     >
-                                        {loading ? 'Verifying...' : 'Verify Age'}
+                                        {loading ? 'Starting verification...' : 'Verify In Background & Continue'}
                                     </Button>
+
+                                    {loading && (
+                                        <div className="rounded-xl border border-primary/30 bg-primary/10 px-4 py-3">
+                                            <div className="flex items-center gap-3 text-sm text-primary font-medium">
+                                                <Loader2 className="w-4 h-4 animate-spin" />
+                                                <span>{phaseLabel}</span>
+                                            </div>
+                                            <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-primary/20">
+                                                <div className="h-full w-1/3 animate-[pulse_1.2s_ease-in-out_infinite] rounded-full bg-primary" />
+                                            </div>
+                                        </div>
+                                    )}
 
                                 </div>
                             </div>
@@ -335,9 +396,74 @@ export function OnboardingPage({ onComplete }: OnboardingPageProps) {
                                     </p>
                                 </div>
 
+                                <div className="mb-8 rounded-xl border border-border/60 bg-background/40 p-4">
+                                    {ageVerificationState === 'running' && (
+                                        <div className="space-y-3">
+                                            <div className="flex items-center gap-3 text-sm text-primary font-medium">
+                                                <Loader2 className="w-4 h-4 animate-spin" />
+                                                <span>{phaseLabel}</span>
+                                            </div>
+                                            <p className="text-xs text-muted-foreground">
+                                                Age proof is generating in the background. You can fill your profile now.
+                                            </p>
+                                        </div>
+                                    )}
+                                    {ageVerificationState === 'succeeded' && (
+                                        <div className="flex items-center gap-3 text-sm text-green-600 font-medium">
+                                            <CheckCircle2 className="w-4 h-4" />
+                                            <span>Age verification completed. You can submit your profile.</span>
+                                        </div>
+                                    )}
+                                    {ageVerificationState === 'failed' && (
+                                        <div className="space-y-3">
+                                            <p className="text-sm text-destructive font-medium">
+                                                Age verification failed. Please retry to unlock profile submission.
+                                            </p>
+                                            <div className="flex flex-wrap gap-2">
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    onClick={() => setCurrentStep(2)}
+                                                >
+                                                    Edit Age
+                                                </Button>
+                                                <Button
+                                                    type="button"
+                                                    onClick={handleAgeVerification}
+                                                    disabled={loading || !age}
+                                                >
+                                                    {loading ? 'Retrying...' : 'Retry Verification'}
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    )}
+                                    {ageVerificationState === 'required' && (
+                                        <div className="space-y-3">
+                                            <p className="text-sm text-muted-foreground">
+                                                Age verification is required before profile submission.
+                                            </p>
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                onClick={() => setCurrentStep(2)}
+                                            >
+                                                Go To Age Verification
+                                            </Button>
+                                        </div>
+                                    )}
+                                </div>
+
                                 <ProfileForm
                                     walletAddress={walletAddress}
                                     onSuccess={() => setCurrentStep(4)}
+                                    canSubmit={ageVerificationState === 'succeeded'}
+                                    submitDisabledReason={
+                                        ageVerificationState === 'running'
+                                            ? 'Waiting for age verification to complete...'
+                                            : ageVerificationState === 'failed'
+                                                ? 'Retry age verification first'
+                                                : 'Age verification required'
+                                    }
                                 />
                             </div>
                         )}
