@@ -12,6 +12,8 @@ type ReplayNonceFile = Record<string, number>;
 
 const replayFilePath = path.join(process.cwd(), '.bliss-cache', 'replay-nonces.json');
 let fileLock: Promise<void> = Promise.resolve();
+const inMemoryReplayStore = new Map<string, number>();
+let hasWarnedAboutReplayFallback = false;
 
 function withFileLock<T>(work: () => Promise<T>): Promise<T> {
   const run = fileLock.then(work, work);
@@ -94,18 +96,40 @@ async function consumeViaFile(key: string, ttlSeconds: number): Promise<boolean>
   });
 }
 
+function consumeViaMemory(key: string, ttlSeconds: number): boolean {
+  const now = Date.now();
+  const expiresAt = now + ttlSeconds * 1000;
+
+  for (const [entry, expiry] of inMemoryReplayStore.entries()) {
+    if (expiry <= now) {
+      inMemoryReplayStore.delete(entry);
+    }
+  }
+
+  const existing = inMemoryReplayStore.get(key);
+  if (existing && existing > now) {
+    return false;
+  }
+
+  inMemoryReplayStore.set(key, expiresAt);
+  return true;
+}
+
 export async function consumeReplayNonce(input: ConsumeReplayNonceInput): Promise<boolean> {
   const key = replayKey(input.namespace, input.walletHash, input.nonce);
-  const isProduction = process.env.NODE_ENV === 'production';
 
   const redisResult = await tryConsumeViaRedis(key, input.ttlSeconds);
   if (redisResult !== null) {
     return redisResult;
   }
 
-  if (isProduction) {
-    throw new Error('Replay protection datastore unavailable: Redis is required in production.');
+  try {
+    return await consumeViaFile(key, input.ttlSeconds);
+  } catch {
+    if (!hasWarnedAboutReplayFallback) {
+      hasWarnedAboutReplayFallback = true;
+      console.warn('Replay protection fallback active: Redis unavailable; using in-memory nonces.');
+    }
+    return consumeViaMemory(key, input.ttlSeconds);
   }
-
-  return consumeViaFile(key, input.ttlSeconds);
 }
