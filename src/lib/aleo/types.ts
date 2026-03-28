@@ -44,6 +44,7 @@ export interface WalletState {
 export interface AgeVerificationResult {
   success: boolean;
   record?: VerificationRecord;
+  recordSource?: 'wallet' | 'optimistic';
   transaction?: AleoTransaction;
   error?: string;
 }

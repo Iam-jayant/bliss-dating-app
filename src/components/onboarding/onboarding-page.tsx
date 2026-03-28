@@ -142,22 +142,27 @@ export function OnboardingPage({ onComplete }: OnboardingPageProps) {
             }
 
             let possessionTxId: string | null = null;
-            try {
-                setVerificationPhase('possession');
-                const possession = await aleoService.proveVerificationRecord(result.record, {
-                    publicKey: walletAddress,
-                    requestTransaction: executeTransaction,
-                    transactionStatus,
-                    requestRecords,
-                });
+            const shouldAttemptPossession = result.recordSource !== 'optimistic';
+            if (shouldAttemptPossession) {
+                try {
+                    setVerificationPhase('possession');
+                    const possession = await aleoService.proveVerificationRecord(result.record, {
+                        publicKey: walletAddress,
+                        requestTransaction: executeTransaction,
+                        transactionStatus,
+                        requestRecords,
+                    });
 
-                if (possession.success && possession.verified) {
-                    possessionTxId = possession.transaction?.id || null;
-                } else {
-                    console.warn('Possession check did not complete, continuing with verified credential fallback:', possession.error);
+                    if (possession.success && possession.verified) {
+                        possessionTxId = possession.transaction?.id || null;
+                    } else {
+                        console.warn('Possession check did not complete, continuing with verified credential fallback:', possession.error);
+                    }
+                } catch (possessionError) {
+                    console.warn('Possession check failed, continuing with verified credential fallback:', possessionError);
                 }
-            } catch (possessionError) {
-                console.warn('Possession check failed, continuing with verified credential fallback:', possessionError);
+            } else {
+                console.info('Skipping possession check because wallet verification record was not discoverable yet.');
             }
 
             const { hashWalletAddress } = await import('@/lib/wallet-hash');
@@ -186,8 +191,10 @@ export function OnboardingPage({ onComplete }: OnboardingPageProps) {
                         <b>Fix:</b> Open Leo Wallet, send <b>1 Aleo</b> to yourself, then try again.
                     </span> as any
                 );
+            } else if (/\/verify_age.*expects \d+ inputs?/i.test(errorMessage)) {
+                setError(errorMessage);
             } else if (
-                /transaction rejected|wallet rejected|request rejected|user rejected|denied|cancelled|canceled/i.test(errorMessage)
+                /wallet rejected|request rejected|user rejected|denied|cancelled|canceled|rejected by the wallet before an on-chain id was issued/i.test(errorMessage)
             ) {
                 setError('Wallet rejected the request. Re-open the wallet popup, approve the transaction, and retry verification.');
             } else {

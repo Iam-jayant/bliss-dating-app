@@ -434,42 +434,69 @@ export class AleoService {
 
       privacyLog('Starting age verification process (age not logged for privacy)');
 
-      // Create transaction using Leo docs format
-      const inputs = [walletAdapter.publicKey, `${age}u8`];
       const fee = ALEO_CONFIG.FEE_MICROCREDITS;
+      let tx: any | null = null;
+      let resolvedTransactionId: string | null = null;
+      const inputCandidates = [
+        [walletAdapter.publicKey, `${age}u8`],
+        [`${age}u8`],
+      ];
 
-      console.log('Creating transaction with:', {
-        program: this.programId,
-        function: ALEO_CONFIG.FUNCTIONS.VERIFY_AGE,
-        inputs,
-        fee,
-        publicKey: walletAdapter.publicKey
-      });
+      for (let inputIndex = 0; inputIndex < inputCandidates.length; inputIndex += 1) {
+        const inputs = inputCandidates[inputIndex];
+        const txOptions = {
+          program: this.programId,
+          function: ALEO_CONFIG.FUNCTIONS.VERIFY_AGE,
+          inputs,
+          fee,
+          privateFee: false,
+        };
 
-      const txOptions = {
-        program: this.programId,
-        function: ALEO_CONFIG.FUNCTIONS.VERIFY_AGE,
-        inputs,
-        fee,
-        privateFee: false,
-      };
+        console.log('Creating transaction with:', {
+          program: this.programId,
+          function: ALEO_CONFIG.FUNCTIONS.VERIFY_AGE,
+          inputs,
+          fee,
+          publicKey: walletAdapter.publicKey
+        });
+        console.log('Requesting transaction from wallet:', txOptions);
+        onProgress?.('submitting-transaction');
 
-      console.log('Requesting transaction from wallet:', txOptions);
-      onProgress?.('submitting-transaction');
+        try {
+          const txResponse = await walletAdapter.requestTransaction(txOptions);
+          const transactionId = this.extractTransactionId(txResponse);
 
-      // Request transaction from wallet - this should trigger the wallet popup
-      const txResponse = await walletAdapter.requestTransaction(txOptions);
-      const transactionId = this.extractTransactionId(txResponse);
+          if (!transactionId) {
+            throw new Error('Transaction request failed (no ID returned)');
+          }
 
-      if (!transactionId) {
-        throw new Error('Transaction request failed (no ID returned)');
+          onProgress?.('waiting-for-confirmation');
+          tx = await this.waitForConfirmedTransaction(transactionId, walletAdapter);
+          resolvedTransactionId = String((tx as Record<string, unknown>)?.id || transactionId);
+          break;
+        } catch (attemptError) {
+          const attemptErrorMessage = attemptError instanceof Error ? attemptError.message : String(attemptError);
+          const shouldRetryWithLegacyInput = inputIndex === 0
+            && this.isVerifyAgeLegacyInputMismatchError(attemptErrorMessage);
+
+          if (shouldRetryWithLegacyInput) {
+            privacyLog('verify_age input mismatch detected, retrying with legacy single-input format', {
+              programId: this.programId,
+            });
+            continue;
+          }
+
+          throw attemptError;
+        }
       }
 
-      onProgress?.('waiting-for-confirmation');
-      const tx = await this.waitForConfirmedTransaction(transactionId, walletAdapter);
-      const resolvedTransactionId = String((tx as Record<string, unknown>)?.id || transactionId);
+      if (!tx || !resolvedTransactionId) {
+        throw new Error('Transaction request failed before confirmation');
+      }
+
       const outputs = this.extractTransitionOutputs(tx);
       let record = this.parseVerificationRecord(outputs);
+      let recordSource: 'wallet' | 'optimistic' = 'wallet';
 
       // Explorer output may omit private records. Fetch latest record from wallet if available.
       if (!record && walletAdapter.requestRecords) {
@@ -483,6 +510,7 @@ export class AleoService {
           { transactionId: resolvedTransactionId, owner: walletAdapter.publicKey },
         );
         record = this.buildOptimisticVerificationRecord(walletAdapter.publicKey);
+        recordSource = 'optimistic';
       }
 
       // Validate verification record privacy
@@ -496,6 +524,7 @@ export class AleoService {
       return {
         success: true,
         record,
+        recordSource,
         transaction: {
           id: resolvedTransactionId,
           status: tx.status === 'failed' ? 'failed' : 'confirmed',
@@ -513,6 +542,13 @@ export class AleoService {
         return {
           success: false,
           error: 'Your wallet needs fee records to pay for transactions. Please send 0.1 Aleo to yourself in Leo Wallet (this creates fee records), wait for confirmation, then try again.'
+        };
+      }
+
+      if (/\/verify_age.*expects \d+ inputs?/i.test(errorMessage)) {
+        return {
+          success: false,
+          error: `Age verification program mismatch: ${errorMessage}. Please ensure NEXT_PUBLIC_AGE_VERIFICATION_PROGRAM points to the currently deployed Bliss age program.`
         };
       }
 
@@ -597,7 +633,7 @@ export class AleoService {
       };
 
     } catch (error) {
-      console.error('Proof of possession failed:', error);
+      console.warn('Proof of possession skipped/failed:', error);
       return {
         success: false,
         verified: false,
@@ -786,13 +822,21 @@ export class AleoService {
 
   private isLikelyWalletRejectionMessage(message: string): boolean {
     const normalized = message.toLowerCase();
-    return normalized.includes('transaction rejected')
-      || normalized.includes('wallet rejected')
+    return normalized.includes('wallet rejected')
       || normalized.includes('request rejected')
       || normalized.includes('user rejected')
       || normalized.includes('denied')
       || normalized.includes('cancelled')
-      || normalized.includes('canceled');
+      || normalized.includes('canceled')
+      || normalized.includes('rejected by the wallet before an on-chain id was issued')
+      || /(?:^|[\s:])(shield|leo|fox|soter|puzzle)_[a-z0-9_]+/i.test(message);
+  }
+
+  private isVerifyAgeLegacyInputMismatchError(message: string): boolean {
+    const normalized = message.toLowerCase();
+    return normalized.includes('/verify_age')
+      && normalized.includes('expects 1 inputs')
+      && normalized.includes('2 were provided');
   }
 
   private formatRejectedTransactionError(transactionId: string, reason?: string | null): string {
