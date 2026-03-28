@@ -582,21 +582,21 @@ export async function flushPendingSwipeSettlements(
   const maxItems = options?.maxItems ?? 1;
   const minRetryIntervalMs = options?.minRetryIntervalMs ?? 30_000;
 
-  const queue = readPendingSwipeSettlements(walletAddress);
-  if (!queue.length) {
+  const initialQueue = readPendingSwipeSettlements(walletAddress);
+  if (!initialQueue.length) {
     return { settled: 0, remaining: 0, failed: 0 };
   }
 
   const now = Date.now();
-  const processing = queue.slice(0, maxItems);
-  const untouched = queue.slice(maxItems);
-  const retry: PendingSwipeSettlement[] = [];
+  const processing = initialQueue.slice(0, maxItems);
+  const processingIds = new Set(processing.map((item) => item.id));
+  const retryById = new Map<string, PendingSwipeSettlement>();
   let settled = 0;
   let failed = 0;
 
   for (const item of processing) {
     if (item.lastAttemptAt && now - item.lastAttemptAt < minRetryIntervalMs) {
-      retry.push(item);
+      retryById.set(item.id, item);
       continue;
     }
 
@@ -607,7 +607,7 @@ export async function flushPendingSwipeSettlements(
       decrementDailySwipes(walletAddress);
     } catch {
       failed += 1;
-      retry.push({
+      retryById.set(item.id, {
         ...item,
         attempts: item.attempts + 1,
         lastAttemptAt: now,
@@ -615,7 +615,12 @@ export async function flushPendingSwipeSettlements(
     }
   }
 
-  const next = [...retry, ...untouched];
+  // Re-read latest queue so we do not overwrite items queued while this flush was running.
+  const latestQueue = readPendingSwipeSettlements(walletAddress);
+  const latestIds = new Set(latestQueue.map((item) => item.id));
+  const retry = Array.from(retryById.values()).filter((item) => latestIds.has(item.id));
+  const remainingLatest = latestQueue.filter((item) => !processingIds.has(item.id));
+  const next = [...retry, ...remainingLatest];
   writePendingSwipeSettlements(walletAddress, next);
   return {
     settled,
@@ -639,4 +644,3 @@ export function incrementDailySuperLikes(walletAddress: string): void {
 export function getSelectionPricing(tier: PaidTier, termMonths: SubscriptionTermMonths): SubscriptionSelection {
   return getSelection(tier, termMonths);
 }
-

@@ -87,15 +87,15 @@ export function sanitizeError(error: Error): string {
  * @param record - The verification record to validate
  */
 export function validateVerificationRecord(record: any): boolean {
-  const allowedFields = ['owner', 'verified', '_nonce', '_version'];
+  const allowedFields = ['owner', 'verified'];
   const recordFields = Object.keys(record);
   
   // Ensure only allowed fields are present
   const hasOnlyAllowedFields = recordFields.every(field => allowedFields.includes(field));
   
   // Ensure no sensitive data in field values
-  // Exclude '_nonce' and 'owner' from validation as they contain timestamps/addresses
-  const fieldsToCheck = recordFields.filter(f => !['_nonce', 'owner', '_version'].includes(f));
+  // Exclude 'owner' from validation because it contains a wallet address
+  const fieldsToCheck = recordFields.filter(f => f !== 'owner');
   
   const hasNoSensitiveData = fieldsToCheck.every(field => {
     const value = record[field];

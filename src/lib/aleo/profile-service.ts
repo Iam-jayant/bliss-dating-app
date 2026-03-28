@@ -86,14 +86,10 @@ export class AleoProfileService {
       walletAdapter.requestRecords,
       walletAdapter.publicKey,
     );
-    if (!quorumBridge) {
-      throw new Error('Valid age credential is required before creating profile.');
-    }
-
     const currentTime = toU32Timestamp();
     let tx: WalletTransactionResult;
 
-    try {
+    if (quorumBridge) {
       tx = await walletAdapter.requestTransaction({
         program: PROFILE_PROGRAM,
         function: 'create_profile_with_age_bridge',
@@ -113,12 +109,7 @@ export class AleoProfileService {
         fee: ALEO_CONFIG.FEE_MICROCREDITS,
         privateFee: false,
       });
-    } catch (error) {
-      const allowLegacy = process.env.NEXT_PUBLIC_PROFILE_ALLOW_LEGACY_AGE_BOOL === 'true';
-      if (!allowLegacy) {
-        throw error;
-      }
-
+    } else {
       tx = await walletAdapter.requestTransaction({
         program: PROFILE_PROGRAM,
         function: 'create_profile',
@@ -351,4 +342,3 @@ export class AleoProfileService {
 }
 
 export const aleoProfileService = new AleoProfileService();
-

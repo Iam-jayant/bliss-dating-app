@@ -29,12 +29,24 @@ export function AleoWalletProvider({ children }: AleoWalletProviderProps) {
     []
   );
 
+  const programs = useMemo(
+    () => [...new Set([
+      process.env.NEXT_PUBLIC_AGE_VERIFICATION_PROGRAM || 'bliss_age_verification_v4.aleo',
+      process.env.NEXT_PUBLIC_PROFILE_VERIFICATION_PROGRAM || 'bliss_profile_verification_v4.aleo',
+      process.env.NEXT_PUBLIC_COMPATIBILITY_MATCHING_PROGRAM || 'bliss_compatibility_matching_v2.aleo',
+      process.env.NEXT_PUBLIC_SUBSCRIPTION_ACCESS_PROGRAM || 'bliss_subscription_access_v2.aleo',
+      'credits.aleo',
+    ])],
+    []
+  );
+
   return (
     <ProvableWalletProvider
       wallets={wallets}
+      programs={programs}
       network={Network.TESTNET}
       decryptPermission={DecryptPermission.UponRequest}
-      autoConnect={false}
+      autoConnect
       onError={(error) => console.error('Wallet error:', error)}
     >
       <WalletModalProvider>
