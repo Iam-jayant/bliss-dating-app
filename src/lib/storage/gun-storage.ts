@@ -10,8 +10,11 @@ import { verifyCanonicalPayload } from '@/lib/security/local-identity';
 
 let gunInstance: any = null;
 let gunLoadPromise: Promise<any> | null = null;
+let profilesSubscribed = false;
 let actionsSubscribed = false;
 let matchesSubscribed = false;
+
+export const PROFILES_UPDATED_EVENT = 'bliss:profiles-updated';
 
 const GUN_PEERS = [
   'https://gun-manhattan.herokuapp.com/gun',
@@ -65,6 +68,11 @@ function setLocalData(key: string, data: unknown): void {
   localStorage.setItem(key, JSON.stringify(data));
 }
 
+function emitProfilesUpdated(): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new Event(PROFILES_UPDATED_EVENT));
+}
+
 function upsertById<T extends { id: string }>(items: T[], incoming: T): T[] {
   const idx = items.findIndex((item) => item.id === incoming.id);
   if (idx === -1) return [...items, incoming];
@@ -81,6 +89,7 @@ export async function saveProfile(walletHash: string, profile: ProfileData): Pro
   const profiles = getLocalData<Record<string, ProfileData>>(BLISS_V3_KEYS.profilesByHash, {});
   profiles[walletHash] = profile;
   setLocalData(BLISS_V3_KEYS.profilesByHash, profiles);
+  emitProfilesUpdated();
 
   try {
     const gun = await getGun();
@@ -102,28 +111,50 @@ export function getAllLocalProfiles(): ProfileData[] {
   return Object.values(profiles);
 }
 
+function upsertProfileFromNetwork(raw: string, key: string): void {
+  if (!raw || raw === 'null') return;
+  try {
+    const profile = JSON.parse(raw) as ProfileData;
+    const profiles = getLocalData<Record<string, ProfileData>>(BLISS_V3_KEYS.profilesByHash, {});
+    const existing = profiles[key];
+    const hasNewerTimestamp = Boolean(
+      profile.updated_at
+      && existing?.updated_at
+      && profile.updated_at >= existing.updated_at,
+    );
+    if (!existing || !existing.updated_at || hasNewerTimestamp) {
+      profiles[key] = profile;
+      setLocalData(BLISS_V3_KEYS.profilesByHash, profiles);
+      emitProfilesUpdated();
+    }
+  } catch {
+    // Ignore malformed network payloads
+  }
+}
+
 export async function syncProfilesFromNetwork(): Promise<void> {
   try {
     const gun = await getGun();
     if (!gun) return;
 
     gun.get('bliss_v3').get('profiles').map().once((raw: string, key: string) => {
-      if (!raw || raw === 'null') return;
-      try {
-        const profile = JSON.parse(raw) as ProfileData;
-        const profiles = getLocalData<Record<string, ProfileData>>(BLISS_V3_KEYS.profilesByHash, {});
-        const existing = profiles[key];
-        if (!existing || (profile.updated_at && existing.updated_at && profile.updated_at >= existing.updated_at)) {
-          profiles[key] = profile;
-          setLocalData(BLISS_V3_KEYS.profilesByHash, profiles);
-        }
-      } catch {
-        // Ignore malformed network payloads
-      }
+      upsertProfileFromNetwork(raw, key);
     });
   } catch (error) {
     console.warn('Profile sync failed:', error);
   }
+}
+
+async function subscribeProfilesFromNetwork(): Promise<void> {
+  if (profilesSubscribed) return;
+  const gun = await getGun();
+  if (!gun) return;
+
+  profilesSubscribed = true;
+  const ref = gun.get('bliss_v3').get('profiles');
+  ref.map().on((raw: string, key: string) => {
+    upsertProfileFromNetwork(raw, key);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -507,6 +538,7 @@ export async function subscribeToChat(
 export async function initializeStorage(): Promise<void> {
   await getGun();
   await syncProfilesFromNetwork();
+  await subscribeProfilesFromNetwork();
   await subscribeActionsFromNetwork();
   await subscribeMatchesFromNetwork();
 }

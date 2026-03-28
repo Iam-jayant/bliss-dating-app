@@ -24,6 +24,7 @@ import {
   decrementDailySwipes,
   flushPendingSwipeSettlements,
   getPendingSwipeSettlementCount,
+  getPendingSwipeSettlements,
   incrementDailySwipes,
   incrementDailySuperLikes,
   popLastPendingSwipeSettlement,
@@ -35,6 +36,7 @@ import { DiscoveryFilters, type FilterState } from './discovery-filters';
 import { ReportModal } from '@/components/safety/report-modal';
 import { SubscriptionModal } from '@/components/subscription/subscription-modal';
 import { BLISS_V3_KEYS } from '@/lib/storage/schema';
+import { PROFILES_UPDATED_EVENT, syncProfilesFromNetwork } from '@/lib/storage/gun-storage';
 import Image from 'next/image';
 import { aleoProfileService } from '@/lib/aleo/profile-service';
 
@@ -58,8 +60,17 @@ const ACTION_RECEIPT_MODE = process.env.NEXT_PUBLIC_SWIPE_RECEIPT_MODE || 'defer
 const PENDING_ACTION_RECEIPTS_KEY = 'bliss_v3_pending_action_receipts';
 const DEFERRED_SETTLEMENT_THRESHOLD = Number(process.env.NEXT_PUBLIC_SWIPE_SETTLEMENT_THRESHOLD || 10);
 const DEFERRED_SETTLEMENT_RETRY_MS = 30_000;
+const BACKGROUND_SETTLEMENT_INTERVAL_MS = Number(process.env.NEXT_PUBLIC_BACKGROUND_SETTLEMENT_INTERVAL_MS || 45_000);
+const BACKGROUND_SETTLEMENT_IDLE_MS = Number(process.env.NEXT_PUBLIC_BACKGROUND_SETTLEMENT_IDLE_MS || 20_000);
+const BACKGROUND_SETTLEMENT_STALE_MS = Number(process.env.NEXT_PUBLIC_BACKGROUND_SETTLEMENT_STALE_MS || 300_000);
+const BACKGROUND_SETTLEMENT_COOLDOWN_MS = Number(process.env.NEXT_PUBLIC_BACKGROUND_SETTLEMENT_COOLDOWN_MS || 90_000);
+const AUTO_SWIPE_SETTLEMENT_BATCH_SIZE = 1;
+const AUTO_ACTION_RECEIPT_BATCH_SIZE = 1;
+const PROFILE_SYNC_RETRY_DELAYS_MS = [0, 350, 1200] as const;
+const GLOBAL_DISCOVERY_MODE = true;
 
 interface PendingActionReceipt {
+  id: string;
   targetWalletAddress: string;
   actionType: 'pass' | 'like' | 'superlike';
   createdAt: number;
@@ -88,10 +99,45 @@ function formatIntent(intent: string): string {
   return map[intent] || intent;
 }
 
+function normalizeIntent(intent: string): string {
+  const cleaned = intent.trim().toLowerCase().replace(/\s+/g, '_').replace(/-/g, '_');
+  if (cleaned === 'long_term') return 'long_term';
+  if (cleaned === 'short_term') return 'short_term';
+  if (cleaned === 'casual') return 'casual';
+  if (cleaned === 'friends' || cleaned === 'friendship') return 'friendship';
+  return 'not_sure';
+}
+
+function normalizeInterests(interests: unknown): string[] {
+  if (!Array.isArray(interests)) return [];
+  return interests.filter((interest): interest is string => typeof interest === 'string');
+}
+
 function loadDeferredActionReceipts(): PendingActionReceipt[] {
   if (typeof window === 'undefined') return [];
   const raw = localStorage.getItem(PENDING_ACTION_RECEIPTS_KEY);
-  return raw ? JSON.parse(raw) : [];
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((item, idx) => {
+      const targetWalletAddress = typeof item?.targetWalletAddress === 'string' ? item.targetWalletAddress : '';
+      const actionType = item?.actionType === 'pass' || item?.actionType === 'superlike' ? item.actionType : 'like';
+      const createdAt = typeof item?.createdAt === 'number' ? item.createdAt : Date.now();
+      return {
+        id: typeof item?.id === 'string'
+          ? item.id
+          : `${createdAt}_${actionType}_${targetWalletAddress}_${idx}`,
+        targetWalletAddress,
+        actionType,
+        createdAt,
+        attempts: typeof item?.attempts === 'number' ? item.attempts : 0,
+        lastAttemptAt: typeof item?.lastAttemptAt === 'number' ? item.lastAttemptAt : undefined,
+      } satisfies PendingActionReceipt;
+    });
+  } catch {
+    return [];
+  }
 }
 
 function saveDeferredActionReceipts(receipts: PendingActionReceipt[]): void {
@@ -99,10 +145,13 @@ function saveDeferredActionReceipts(receipts: PendingActionReceipt[]): void {
   localStorage.setItem(PENDING_ACTION_RECEIPTS_KEY, JSON.stringify(receipts));
 }
 
-function queueDeferredActionReceipt(receipt: PendingActionReceipt): number {
+function queueDeferredActionReceipt(receipt: Omit<PendingActionReceipt, 'id'>): number {
   if (typeof window === 'undefined') return 0;
   const current = loadDeferredActionReceipts();
-  current.push(receipt);
+  current.push({
+    ...receipt,
+    id: `${Date.now()}_${Math.random().toString(36).slice(2, 12)}`,
+  });
   saveDeferredActionReceipts(current);
   return current.length;
 }
@@ -135,6 +184,9 @@ export default function DiscoveryPage() {
   const [showSubscriptionModal, setShowSubscriptionModal] = useState(false);
   const flushInProgressRef = useRef(false);
   const swipeFlushInProgressRef = useRef(false);
+  const lastSwipeInteractionAtRef = useRef(0);
+  const lastSwipeAutoFlushAtRef = useRef(0);
+  const lastActionAutoFlushAtRef = useRef(0);
 
   const currentProfile = profiles[currentIndex];
 
@@ -184,17 +236,30 @@ export default function DiscoveryPage() {
     }
   }, [executeTransaction, publicKey, refreshSubscription, requestRecords, transactionStatus]);
 
+  const triggerBackgroundSwipeSettlement = useCallback((force = false) => {
+    if (SWIPE_SETTLEMENT_MODE !== 'deferred' || !publicKey) return;
+    const queue = getPendingSwipeSettlements(publicKey);
+    if (!queue.length) return;
+
+    const now = Date.now();
+    const oldestAgeMs = now - queue[0].createdAt;
+    const shouldFlushByQueueState = queue.length >= PENDING_SWIPE_SETTLEMENT_THRESHOLD || oldestAgeMs >= BACKGROUND_SETTLEMENT_STALE_MS;
+    if (!force && !shouldFlushByQueueState) return;
+    if (!force && now - lastSwipeInteractionAtRef.current < BACKGROUND_SETTLEMENT_IDLE_MS) return;
+    if (!force && now - lastSwipeAutoFlushAtRef.current < BACKGROUND_SETTLEMENT_COOLDOWN_MS) return;
+
+    lastSwipeAutoFlushAtRef.current = now;
+    void flushDeferredSwipeSettlements(AUTO_SWIPE_SETTLEMENT_BATCH_SIZE);
+  }, [flushDeferredSwipeSettlements, publicKey]);
+
   const consumeSwipeEntitlement = useCallback(async (): Promise<boolean> => {
     if (!publicKey) return false;
 
     if (SWIPE_SETTLEMENT_MODE === 'deferred') {
       incrementDailySwipes(publicKey);
       queuePendingSwipeSettlement(publicKey);
-      const pending = getPendingSwipeSettlementCount(publicKey);
-      if (pending >= PENDING_SWIPE_SETTLEMENT_THRESHOLD) {
-        void flushDeferredSwipeSettlements(1);
-      }
       await refreshSubscription();
+      triggerBackgroundSwipeSettlement(false);
       return true;
     }
 
@@ -239,7 +304,7 @@ export default function DiscoveryPage() {
       setShowSubscriptionModal(true);
       return false;
     }
-  }, [executeTransaction, flushDeferredSwipeSettlements, publicKey, refreshSubscription, requestRecords, transactionStatus]);
+  }, [executeTransaction, publicKey, refreshSubscription, requestRecords, transactionStatus, triggerBackgroundSwipeSettlement]);
 
   const recordActionReceipt = useCallback(async (
     targetWalletAddress: string,
@@ -293,12 +358,12 @@ export default function DiscoveryPage() {
     try {
       const now = Date.now();
       const processing = queue.slice(0, maxItems);
-      const untouched = queue.slice(maxItems);
-      const retryItems: PendingActionReceipt[] = [];
+      const processingIds = new Set(processing.map((item) => item.id));
+      const retryById = new Map<string, PendingActionReceipt>();
 
       for (const item of processing) {
         if (item.lastAttemptAt && now - item.lastAttemptAt < DEFERRED_SETTLEMENT_RETRY_MS) {
-          retryItems.push(item);
+          retryById.set(item.id, item);
           continue;
         }
 
@@ -306,7 +371,7 @@ export default function DiscoveryPage() {
           // eslint-disable-next-line no-await-in-loop
           await recordActionReceipt(item.targetWalletAddress, item.actionType);
         } catch {
-          retryItems.push({
+          retryById.set(item.id, {
             ...item,
             attempts: (item.attempts || 0) + 1,
             lastAttemptAt: now,
@@ -314,47 +379,100 @@ export default function DiscoveryPage() {
         }
       }
 
-      saveDeferredActionReceipts([...retryItems, ...untouched]);
+      const latestQueue = loadDeferredActionReceipts();
+      const latestIds = new Set(latestQueue.map((item) => item.id));
+      const retryItems = Array.from(retryById.values()).filter((item) => latestIds.has(item.id));
+      const remainingLatest = latestQueue.filter((item) => !processingIds.has(item.id));
+      saveDeferredActionReceipts([...retryItems, ...remainingLatest]);
     } finally {
       flushInProgressRef.current = false;
     }
   }, [publicKey, recordActionReceipt]);
 
+  const triggerBackgroundActionReceiptFlush = useCallback((force = false) => {
+    if (ACTION_RECEIPT_MODE === 'immediate' || !publicKey) return;
+    const queue = loadDeferredActionReceipts();
+    if (!queue.length) return;
+
+    const now = Date.now();
+    const oldestAgeMs = now - queue[0].createdAt;
+    const shouldFlushByQueueState = queue.length >= DEFERRED_SETTLEMENT_THRESHOLD || oldestAgeMs >= BACKGROUND_SETTLEMENT_STALE_MS;
+    if (!force && !shouldFlushByQueueState) return;
+    if (!force && now - lastSwipeInteractionAtRef.current < BACKGROUND_SETTLEMENT_IDLE_MS) return;
+    if (!force && now - lastActionAutoFlushAtRef.current < BACKGROUND_SETTLEMENT_COOLDOWN_MS) return;
+
+    lastActionAutoFlushAtRef.current = now;
+    void flushDeferredActionReceipts(AUTO_ACTION_RECEIPT_BATCH_SIZE);
+  }, [flushDeferredActionReceipts, publicKey]);
+
   const loadProfiles = useCallback(async () => {
     try {
       setLoading(true);
-      
-      const localProfiles = await getAllProfiles();
-      
+
+      // Gun profile sync is async/event-driven, so retry a couple times
+      // before deciding the discovery feed is empty.
+      void syncProfilesFromNetwork();
+      let localProfiles: ProfileData[] = [];
+      for (const delayMs of PROFILE_SYNC_RETRY_DELAYS_MS) {
+        if (delayMs > 0) {
+          // eslint-disable-next-line no-await-in-loop
+          await new Promise((resolve) => window.setTimeout(resolve, delayMs));
+        }
+        // eslint-disable-next-line no-await-in-loop
+        localProfiles = await getAllProfiles();
+        if (localProfiles.length > 0) break;
+      }
+
       if (localProfiles.length > 0) {
         let currentUserHash: string | undefined;
         let userProfile: ProfileData | null = null;
-        
+
         if (publicKey) {
           userProfile = await getProfile(publicKey);
           currentUserHash = userProfile?.wallet_hash;
         }
-        
-        // Convert ProfileData → DiscoveryProfile
+
+        const normalizedFilterIntents = filters.intents.map(normalizeIntent);
+        const normalizedFilterInterests = filters.interests.map((interest) => interest.trim().toLowerCase());
+
+        // Convert ProfileData -> DiscoveryProfile
         let discoveryProfiles: DiscoveryProfile[] = localProfiles
-          .filter(p => {
+          .filter((p) => {
+            if (!p?.wallet_hash) return false;
             if (currentUserHash && p.wallet_hash === currentUserHash) return false;
-            if (currentUserHash && hasActedOn(currentUserHash, p.wallet_hash)) return false;
+            if (!GLOBAL_DISCOVERY_MODE && currentUserHash && hasActedOn(currentUserHash, p.wallet_hash)) return false;
             return true;
           })
-          .map(profile => {
+          .map((profile) => {
+            const safeInterests = normalizeInterests(profile.interests);
+            const safeIntent = normalizeIntent(profile.dating_intent || 'not_sure');
             let compatibilityScore: number | undefined;
             if (userProfile) {
-              const compat = calculateEnhancedCompatibility(userProfile, profile);
-              compatibilityScore = compat.score;
+              try {
+                const compat = calculateEnhancedCompatibility(
+                  {
+                    ...userProfile,
+                    interests: normalizeInterests(userProfile.interests),
+                    dating_intent: normalizeIntent(userProfile.dating_intent || 'not_sure') as ProfileData['dating_intent'],
+                  },
+                  {
+                    ...profile,
+                    interests: safeInterests,
+                    dating_intent: safeIntent as ProfileData['dating_intent'],
+                  },
+                );
+                compatibilityScore = compat.score;
+              } catch {
+                compatibilityScore = undefined;
+              }
             }
             return {
               walletAddress: profile.wallet_hash,
-              name: profile.name,
-              bio: profile.bio,
-              bioPrompt: profile.bio_prompt_type,
-              interests: profile.interests,
-              datingIntent: profile.dating_intent,
+              name: profile.name || 'Anonymous',
+              bio: profile.bio || '',
+              bioPrompt: profile.bio_prompt_type || 'interests',
+              interests: safeInterests,
+              datingIntent: safeIntent,
               imageCid: profile.profile_image_path || '',
               distance: 0,
               compatibilityScore,
@@ -362,18 +480,18 @@ export default function DiscoveryPage() {
           });
 
         // Apply user filters
-        if (filters.intents.length > 0) {
-          discoveryProfiles = discoveryProfiles.filter(p => 
-            filters.intents.includes(p.datingIntent)
+        if (!GLOBAL_DISCOVERY_MODE && normalizedFilterIntents.length > 0) {
+          discoveryProfiles = discoveryProfiles.filter((p) =>
+            normalizedFilterIntents.includes(normalizeIntent(p.datingIntent))
           );
         }
-        if (filters.interests.length > 0) {
-          discoveryProfiles = discoveryProfiles.filter(p =>
-            p.interests.some(i => filters.interests.includes(i))
+        if (!GLOBAL_DISCOVERY_MODE && normalizedFilterInterests.length > 0) {
+          discoveryProfiles = discoveryProfiles.filter((p) =>
+            p.interests.some((interest) => normalizedFilterInterests.includes(interest.trim().toLowerCase()))
           );
         }
-        if (filters.minCompatibility > 0) {
-          discoveryProfiles = discoveryProfiles.filter(p =>
+        if (!GLOBAL_DISCOVERY_MODE && filters.minCompatibility > 0) {
+          discoveryProfiles = discoveryProfiles.filter((p) =>
             (p.compatibilityScore || 0) >= filters.minCompatibility
           );
         }
@@ -389,7 +507,7 @@ export default function DiscoveryPage() {
           }
           return a.distance - b.distance;
         });
-        
+
         setProfiles(sorted);
         setCurrentIndex(0);
         setLoading(false);
@@ -410,58 +528,71 @@ export default function DiscoveryPage() {
   }, [loadProfiles, loadCurrentUserProfile]);
 
   useEffect(() => {
+    const handleFocus = () => {
+      void loadProfiles();
+      void loadCurrentUserProfile();
+    };
+    const handleProfilesUpdated = () => {
+      void loadProfiles();
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void loadProfiles();
+      }
+    };
+
+    window.addEventListener('focus', handleFocus);
+    window.addEventListener(PROFILES_UPDATED_EVENT, handleProfilesUpdated);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener(PROFILES_UPDATED_EVENT, handleProfilesUpdated);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [loadCurrentUserProfile, loadProfiles]);
+
+  useEffect(() => {
     if (ACTION_RECEIPT_MODE === 'immediate') return;
 
     const onVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
-        void flushDeferredActionReceipts(1);
+        triggerBackgroundActionReceiptFlush(true);
       }
     };
 
-    const onBeforeUnload = () => {
-      void flushDeferredActionReceipts(1);
-    };
-
     const intervalId = window.setInterval(() => {
-      void flushDeferredActionReceipts(1);
-    }, 45_000);
+      triggerBackgroundActionReceiptFlush(false);
+    }, BACKGROUND_SETTLEMENT_INTERVAL_MS);
 
     document.addEventListener('visibilitychange', onVisibilityChange);
-    window.addEventListener('beforeunload', onBeforeUnload);
 
     return () => {
       document.removeEventListener('visibilitychange', onVisibilityChange);
-      window.removeEventListener('beforeunload', onBeforeUnload);
       window.clearInterval(intervalId);
     };
-  }, [flushDeferredActionReceipts]);
+  }, [triggerBackgroundActionReceiptFlush]);
 
   useEffect(() => {
     if (SWIPE_SETTLEMENT_MODE !== 'deferred') return;
 
     const onVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
-        void flushDeferredSwipeSettlements(1);
+        triggerBackgroundSwipeSettlement(true);
       }
     };
 
-    const onBeforeUnload = () => {
-      void flushDeferredSwipeSettlements(1);
-    };
-
     const intervalId = window.setInterval(() => {
-      void flushDeferredSwipeSettlements(1);
-    }, 45_000);
+      triggerBackgroundSwipeSettlement(false);
+    }, BACKGROUND_SETTLEMENT_INTERVAL_MS);
 
     document.addEventListener('visibilitychange', onVisibilityChange);
-    window.addEventListener('beforeunload', onBeforeUnload);
 
     return () => {
       document.removeEventListener('visibilitychange', onVisibilityChange);
-      window.removeEventListener('beforeunload', onBeforeUnload);
       window.clearInterval(intervalId);
     };
-  }, [flushDeferredSwipeSettlements]);
+  }, [triggerBackgroundSwipeSettlement]);
 
   // ─── SWIPE HANDLERS ────────────────────────────────────────────
 
@@ -472,6 +603,7 @@ export default function DiscoveryPage() {
     }
     if (!canSwipe || !currentProfile) return;
 
+    lastSwipeInteractionAtRef.current = Date.now();
     const entitlementOk = await consumeSwipeEntitlement();
     if (!entitlementOk) return;
 
@@ -508,14 +640,12 @@ export default function DiscoveryPage() {
         ? await recordActionReceipt(targetProfile.wallet_address, 'like')
         : undefined;
       if (ACTION_RECEIPT_MODE !== 'immediate') {
-        const pending = queueDeferredActionReceipt({
+        queueDeferredActionReceipt({
           targetWalletAddress: targetProfile.wallet_address,
           actionType: 'like',
           createdAt: Date.now(),
         });
-        if (pending >= DEFERRED_SETTLEMENT_THRESHOLD) {
-          void flushDeferredActionReceipts(1);
-        }
+        triggerBackgroundActionReceiptFlush(false);
       }
       await recordLike(myProfile.wallet_hash, targetWalletHash, false, onChainReceiptTxId);
 
@@ -557,14 +687,12 @@ export default function DiscoveryPage() {
         : undefined;
 
       if (targetProfile && ACTION_RECEIPT_MODE !== 'immediate') {
-        const pending = queueDeferredActionReceipt({
+        queueDeferredActionReceipt({
           targetWalletAddress: targetProfile.wallet_address,
           actionType: 'pass',
           createdAt: Date.now(),
         });
-        if (pending >= DEFERRED_SETTLEMENT_THRESHOLD) {
-          void flushDeferredActionReceipts(1);
-        }
+        triggerBackgroundActionReceiptFlush(false);
       }
 
       await recordPass(myProfile.wallet_hash, targetWalletHash, onChainReceiptTxId);
@@ -607,6 +735,7 @@ export default function DiscoveryPage() {
     if (!currentProfile || !publicKey) return;
     if (!canSwipe || !canSuperLike) return;
 
+    lastSwipeInteractionAtRef.current = Date.now();
     const entitlementOk = await consumeSwipeEntitlement();
     if (!entitlementOk) return;
 
@@ -625,14 +754,12 @@ export default function DiscoveryPage() {
           ? await recordActionReceipt(targetProfile.wallet_address, 'superlike')
           : undefined;
         if (ACTION_RECEIPT_MODE !== 'immediate') {
-          const pending = queueDeferredActionReceipt({
+          queueDeferredActionReceipt({
             targetWalletAddress: targetProfile.wallet_address,
             actionType: 'superlike',
             createdAt: Date.now(),
           });
-          if (pending >= DEFERRED_SETTLEMENT_THRESHOLD) {
-            void flushDeferredActionReceipts(1);
-          }
+          triggerBackgroundActionReceiptFlush(false);
         }
         await recordLike(myProfile.wallet_hash, currentProfile.walletAddress, true, onChainReceiptTxId);
 
@@ -1050,6 +1177,7 @@ export default function DiscoveryPage() {
     </div>
   );
 }
+
 
 
 
