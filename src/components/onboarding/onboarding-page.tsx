@@ -186,6 +186,10 @@ export function OnboardingPage({ onComplete }: OnboardingPageProps) {
                         <b>Fix:</b> Open Leo Wallet, send <b>1 Aleo</b> to yourself, then try again.
                     </span> as any
                 );
+            } else if (
+                /transaction rejected|wallet rejected|request rejected|user rejected|denied|cancelled|canceled/i.test(errorMessage)
+            ) {
+                setError('Wallet rejected the request. Re-open the wallet popup, approve the transaction, and retry verification.');
             } else {
                 setError(errorMessage || 'Verification failed. Please try again.');
             }

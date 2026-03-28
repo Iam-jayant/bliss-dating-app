@@ -22,6 +22,9 @@ type WalletTransactionStatusResponse = {
   transaction_id?: string;
   id?: string;
   hash?: string;
+  error?: unknown;
+  message?: unknown;
+  reason?: unknown;
   fee?: unknown;
   timestamp?: number;
   execution?: unknown;
@@ -77,6 +80,16 @@ const EXPLORER_FALLBACK_START_ATTEMPT = parsePositiveInteger(
 const EXPLORER_FALLBACK_POLL_EVERY_ATTEMPTS = parsePositiveInteger(
   process.env.NEXT_PUBLIC_ALEO_EXPLORER_FALLBACK_EVERY_ATTEMPTS,
   5,
+);
+
+const LOCAL_REJECTED_STATUS_GRACE_ATTEMPTS = parsePositiveInteger(
+  process.env.NEXT_PUBLIC_ALEO_LOCAL_REJECTED_GRACE_ATTEMPTS,
+  3,
+);
+
+const WALLET_STATUS_ERROR_GRACE_ATTEMPTS = parsePositiveInteger(
+  process.env.NEXT_PUBLIC_ALEO_STATUS_ERROR_GRACE_ATTEMPTS,
+  3,
 );
 
 /**
@@ -502,6 +515,13 @@ export class AleoService {
           error: 'Your wallet needs fee records to pay for transactions. Please send 0.1 Aleo to yourself in Leo Wallet (this creates fee records), wait for confirmation, then try again.'
         };
       }
+
+      if (this.isLikelyWalletRejectionMessage(errorMessage)) {
+        return {
+          success: false,
+          error: 'Wallet rejected the transaction request. Open your wallet popup, approve the age verification transaction, and try again.'
+        };
+      }
       
       const sanitizedError = sanitizeError(error instanceof Error ? error : new Error('Unknown error'));
       privacyLog('Age verification failed', { error: sanitizedError });
@@ -735,6 +755,56 @@ export class AleoService {
       || status === 'expired';
   }
 
+  private isLikelyLocalWalletRequestId(transactionId: string): boolean {
+    if (!transactionId) return false;
+    if (this.isExplorerTransactionId(transactionId)) return false;
+    return /^(shield|leo|fox|soter|puzzle)_/i.test(transactionId);
+  }
+
+  private extractStatusReason(statusResponse: WalletTransactionStatusResponse): string | null {
+    const nestedTransaction = statusResponse.transaction && typeof statusResponse.transaction === 'object'
+      ? (statusResponse.transaction as Record<string, unknown>)
+      : null;
+
+    const candidates = [
+      statusResponse.error,
+      statusResponse.message,
+      statusResponse.reason,
+      nestedTransaction?.error,
+      nestedTransaction?.message,
+      nestedTransaction?.reason,
+    ];
+
+    for (const candidate of candidates) {
+      if (typeof candidate === 'string' && candidate.trim()) {
+        return candidate.trim();
+      }
+    }
+
+    return null;
+  }
+
+  private isLikelyWalletRejectionMessage(message: string): boolean {
+    const normalized = message.toLowerCase();
+    return normalized.includes('transaction rejected')
+      || normalized.includes('wallet rejected')
+      || normalized.includes('request rejected')
+      || normalized.includes('user rejected')
+      || normalized.includes('denied')
+      || normalized.includes('cancelled')
+      || normalized.includes('canceled');
+  }
+
+  private formatRejectedTransactionError(transactionId: string, reason?: string | null): string {
+    if (reason) {
+      return `Transaction rejected: ${reason}`;
+    }
+    if (this.isLikelyLocalWalletRequestId(transactionId)) {
+      return 'Transaction was rejected by the wallet before an on-chain id was issued. Please approve the wallet request and retry.';
+    }
+    return `Transaction rejected: ${transactionId}`;
+  }
+
   private cleanLeoValue(raw: string | undefined): string {
     if (!raw) return '';
     return raw
@@ -958,6 +1028,8 @@ export class AleoService {
       ? transactionId
       : null;
     let lastExplorerProbeAttempt = -1;
+    let localRejectedStatusGraceCount = 0;
+    let walletStatusErrorGraceCount = 0;
 
     for (let i = 0; i < attempts; i += 1) {
       let statusResponse: WalletTransactionStatusResponse | undefined;
@@ -975,6 +1047,7 @@ export class AleoService {
       if (statusResponse) {
         const status = this.normalizeStatus(statusResponse.status);
         const resolvedId = this.extractTransactionId(statusResponse) || activeTransactionId;
+        const statusReason = this.extractStatusReason(statusResponse);
 
         if (resolvedId !== activeTransactionId) {
           activeTransactionId = resolvedId;
@@ -985,6 +1058,22 @@ export class AleoService {
         }
 
         if (this.isFailedStatus(status)) {
+          if (status === 'rejected') {
+            const shouldGraceRetryLocalRejection = this.isLikelyLocalWalletRequestId(resolvedId)
+              && !statusReason
+              && localRejectedStatusGraceCount < LOCAL_REJECTED_STATUS_GRACE_ATTEMPTS
+              && i < attempts - 1;
+
+            if (shouldGraceRetryLocalRejection) {
+              localRejectedStatusGraceCount += 1;
+              // eslint-disable-next-line no-await-in-loop
+              await new Promise((resolve) => setTimeout(resolve, CONFIRMATION_POLL_INTERVAL_MS));
+              continue;
+            }
+
+            throw new Error(this.formatRejectedTransactionError(resolvedId, statusReason));
+          }
+
           throw new Error(`Transaction ${status}: ${resolvedId}`);
         }
 
@@ -999,6 +1088,8 @@ export class AleoService {
             outputs: statusResponse.outputs || [],
           };
         }
+
+        localRejectedStatusGraceCount = 0;
       }
 
       const shouldProbeExplorer = !!explorerTransactionId && (
@@ -1030,7 +1121,21 @@ export class AleoService {
       }
 
       if (statusError && !explorerTransactionId) {
+        const shouldGraceRetryStatusError = walletStatusErrorGraceCount < WALLET_STATUS_ERROR_GRACE_ATTEMPTS
+          && i < attempts - 1;
+
+        if (shouldGraceRetryStatusError) {
+          walletStatusErrorGraceCount += 1;
+          // eslint-disable-next-line no-await-in-loop
+          await new Promise((resolve) => setTimeout(resolve, CONFIRMATION_POLL_INTERVAL_MS));
+          continue;
+        }
+
         throw statusError;
+      }
+
+      if (!statusError) {
+        walletStatusErrorGraceCount = 0;
       }
 
       // eslint-disable-next-line no-await-in-loop
