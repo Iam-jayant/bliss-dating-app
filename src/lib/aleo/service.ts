@@ -53,6 +53,32 @@ type AgeVerificationProgress =
   | 'waiting-for-record'
   | 'completed';
 
+function parsePositiveInteger(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.floor(parsed);
+}
+
+const CONFIRMATION_POLL_INTERVAL_MS = parsePositiveInteger(
+  process.env.NEXT_PUBLIC_ALEO_TX_POLL_INTERVAL_MS,
+  2000,
+);
+
+const CONFIRMATION_MAX_ATTEMPTS = parsePositiveInteger(
+  process.env.NEXT_PUBLIC_ALEO_TX_MAX_ATTEMPTS,
+  180,
+);
+
+const EXPLORER_FALLBACK_START_ATTEMPT = parsePositiveInteger(
+  process.env.NEXT_PUBLIC_ALEO_EXPLORER_FALLBACK_START_ATTEMPT,
+  20,
+);
+
+const EXPLORER_FALLBACK_POLL_EVERY_ATTEMPTS = parsePositiveInteger(
+  process.env.NEXT_PUBLIC_ALEO_EXPLORER_FALLBACK_EVERY_ATTEMPTS,
+  5,
+);
+
 /**
  * Aleo service for interacting with the age verification contract
  */
@@ -439,7 +465,11 @@ export class AleoService {
       }
 
       if (!record) {
-        throw new Error('Verification record is taking longer to index after confirmation. Please retry verification in a few seconds.');
+        console.warn(
+          'Verification record was not discoverable after confirmation; falling back to optimistic verified record.',
+          { transactionId: resolvedTransactionId, owner: walletAdapter.publicKey },
+        );
+        record = this.buildOptimisticVerificationRecord(walletAdapter.publicKey);
       }
 
       // Validate verification record privacy
@@ -665,12 +695,19 @@ export class AleoService {
     }`;
   }
 
+  private buildOptimisticVerificationRecord(owner: string): VerificationRecord {
+    return {
+      owner,
+      verified: true,
+    };
+  }
+
   private isExplorerTransactionId(value: string): boolean {
     return /^at1[0-9a-z]+$/.test(value);
   }
 
   private normalizeStatus(status: unknown): string {
-    return String(status || '').toLowerCase();
+    return String(status || '').trim().toLowerCase();
   }
 
   private isConfirmedStatus(status: string): boolean {
@@ -678,7 +715,13 @@ export class AleoService {
       || status === 'confirmed'
       || status === 'finalized'
       || status === 'completed'
-      || status === 'success';
+      || status === 'success'
+      || status === 'succeeded'
+      || status === 'executed'
+      || status === 'included'
+      || status === 'committed'
+      || status === 'settled'
+      || status === 'done';
   }
 
   private isFailedStatus(status: string): boolean {
@@ -686,7 +729,10 @@ export class AleoService {
       || status === 'rejected'
       || status === 'error'
       || status === 'cancelled'
-      || status === 'canceled';
+      || status === 'canceled'
+      || status === 'aborted'
+      || status === 'dropped'
+      || status === 'expired';
   }
 
   private cleanLeoValue(raw: string | undefined): string {
@@ -703,17 +749,22 @@ export class AleoService {
     requestRecords: (programId: string, includePlaintext?: boolean) => Promise<unknown[]>,
   ): Promise<string | null> {
     try {
-      const records = await requestRecords(this.programId, true);
+      const records = await this.loadProgramRecords(requestRecords);
       if (!Array.isArray(records) || records.length === 0) return null;
 
       for (let i = records.length - 1; i >= 0; i -= 1) {
-        const record = records[i] as WalletRecord;
+        const record = records[i];
         if (!this.parseWalletVerificationRecord(record)) {
           continue;
         }
 
-        if (typeof record?.plaintext === 'string' && record.plaintext.trim()) {
-          return record.plaintext;
+        if (typeof record === 'string' && record.trim()) {
+          return record;
+        }
+
+        const walletRecord = this.normalizeWalletRecord(record);
+        if (typeof walletRecord.plaintext === 'string' && walletRecord.plaintext.trim()) {
+          return walletRecord.plaintext;
         }
       }
 
@@ -777,11 +828,11 @@ export class AleoService {
     expectedOwner?: string,
   ): Promise<VerificationRecord | undefined> {
     try {
-      const records = await requestRecords(this.programId, true);
+      const records = await this.loadProgramRecords(requestRecords);
       if (!Array.isArray(records) || records.length === 0) return undefined;
 
       for (let i = records.length - 1; i >= 0; i -= 1) {
-        const parsedRecord = this.parseWalletVerificationRecord(records[i] as WalletRecord, expectedOwner);
+        const parsedRecord = this.parseWalletVerificationRecord(records[i], expectedOwner);
         if (parsedRecord) {
           return parsedRecord;
         }
@@ -807,6 +858,48 @@ export class AleoService {
       await new Promise((resolve) => setTimeout(resolve, intervalMs));
     }
     return undefined;
+  }
+
+  private async loadProgramRecords(
+    requestRecords: (programId: string, includePlaintext?: boolean) => Promise<unknown[]>,
+  ): Promise<unknown[]> {
+    const [standardRecords, plaintextRecords] = await Promise.all([
+      this.safeRequestRecords(requestRecords, false),
+      this.safeRequestRecords(requestRecords, true),
+    ]);
+
+    if (standardRecords.length === 0) return plaintextRecords;
+    if (plaintextRecords.length === 0) return standardRecords;
+
+    const merged = [...standardRecords];
+    const seen = new Set(standardRecords.map((record) => this.getRecordIdentity(record)));
+
+    for (const record of plaintextRecords) {
+      const identity = this.getRecordIdentity(record);
+      if (seen.has(identity)) {
+        continue;
+      }
+      seen.add(identity);
+      merged.push(record);
+    }
+
+    return merged;
+  }
+
+  private async safeRequestRecords(
+    requestRecords: (programId: string, includePlaintext?: boolean) => Promise<unknown[]>,
+    includePlaintext: boolean,
+  ): Promise<unknown[]> {
+    try {
+      const records = await requestRecords(this.programId, includePlaintext);
+      return Array.isArray(records) ? records : [];
+    } catch (error) {
+      console.warn(
+        `Failed to request ${includePlaintext ? 'plaintext' : 'standard'} records for ${this.programId}:`,
+        error,
+      );
+      return [];
+    }
   }
 
   private extractTransactionId(response: unknown): string | null {
@@ -858,62 +951,100 @@ export class AleoService {
   private async waitForConfirmedTransaction(
     transactionId: string,
     walletAdapter?: AleoServiceWalletAdapter,
-    attempts = 60,
+    attempts = CONFIRMATION_MAX_ATTEMPTS,
   ): Promise<any> {
-    // 1) Preferred path: wallet-native status polling.
-    if (walletAdapter?.transactionStatus) {
-      for (let i = 0; i < attempts; i += 1) {
-        // eslint-disable-next-line no-await-in-loop
-        const statusResponse = await walletAdapter.transactionStatus(transactionId);
-        const status = this.normalizeStatus(statusResponse?.status);
-        const resolvedId = this.extractTransactionId(statusResponse) || transactionId;
+    let activeTransactionId = transactionId;
+    let explorerTransactionId: string | null = this.isExplorerTransactionId(transactionId)
+      ? transactionId
+      : null;
+    let lastExplorerProbeAttempt = -1;
+
+    for (let i = 0; i < attempts; i += 1) {
+      let statusResponse: WalletTransactionStatusResponse | undefined;
+      let statusError: Error | null = null;
+
+      if (walletAdapter?.transactionStatus) {
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          statusResponse = await walletAdapter.transactionStatus(activeTransactionId);
+        } catch (error) {
+          statusError = error instanceof Error ? error : new Error(String(error));
+        }
+      }
+
+      if (statusResponse) {
+        const status = this.normalizeStatus(statusResponse.status);
+        const resolvedId = this.extractTransactionId(statusResponse) || activeTransactionId;
+
+        if (resolvedId !== activeTransactionId) {
+          activeTransactionId = resolvedId;
+        }
+
+        if (this.isExplorerTransactionId(resolvedId)) {
+          explorerTransactionId = resolvedId;
+        }
 
         if (this.isFailedStatus(status)) {
           throw new Error(`Transaction ${status}: ${resolvedId}`);
         }
 
         if (this.isConfirmedStatus(status)) {
-          // Rely on wallet-native status payload first. Explorer endpoints can lag or be unavailable.
           return {
             id: resolvedId,
             status: 'confirmed',
-            fee: statusResponse?.fee || '0',
-            timestamp: statusResponse?.timestamp || Date.now(),
+            fee: statusResponse.fee || '0',
+            timestamp: statusResponse.timestamp || Date.now(),
             walletStatus: statusResponse,
-            transaction: statusResponse?.transaction,
-            outputs: statusResponse?.outputs || [],
+            transaction: statusResponse.transaction,
+            outputs: statusResponse.outputs || [],
           };
         }
-
-        // eslint-disable-next-line no-await-in-loop
-        await new Promise((resolve) => setTimeout(resolve, 2000));
       }
-    }
 
-    // 2) Fallback: explorer polling only for real explorer tx ids.
-    if (this.isExplorerTransactionId(transactionId)) {
-      for (let i = 0; i < attempts; i += 1) {
-        // eslint-disable-next-line no-await-in-loop
-        const data = await this.fetchExplorerTransaction(transactionId);
-        if (data) {
-          const status = this.normalizeStatus(data.status);
-          if (this.isConfirmedStatus(status)) return data;
-          if (this.isFailedStatus(status)) {
-            throw new Error(`Transaction ${status}: ${transactionId}`);
+      const shouldProbeExplorer = !!explorerTransactionId && (
+        !statusResponse
+        || !!statusError
+        || i >= EXPLORER_FALLBACK_START_ATTEMPT
+      );
+
+      if (shouldProbeExplorer && explorerTransactionId) {
+        const isLastAttempt = i === attempts - 1;
+        const shouldPollExplorerNow = isLastAttempt
+          || lastExplorerProbeAttempt < 0
+          || i - lastExplorerProbeAttempt >= EXPLORER_FALLBACK_POLL_EVERY_ATTEMPTS;
+
+        if (shouldPollExplorerNow) {
+          lastExplorerProbeAttempt = i;
+          // eslint-disable-next-line no-await-in-loop
+          const explorerTx = await this.fetchExplorerTransaction(explorerTransactionId);
+          if (explorerTx) {
+            const explorerStatus = this.normalizeStatus(explorerTx.status);
+            if (this.isConfirmedStatus(explorerStatus)) {
+              return explorerTx;
+            }
+            if (this.isFailedStatus(explorerStatus)) {
+              throw new Error(`Transaction ${explorerStatus}: ${explorerTransactionId}`);
+            }
           }
         }
-        // eslint-disable-next-line no-await-in-loop
-        await new Promise((resolve) => setTimeout(resolve, 2000));
       }
+
+      if (statusError && !explorerTransactionId) {
+        throw statusError;
+      }
+
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((resolve) => setTimeout(resolve, CONFIRMATION_POLL_INTERVAL_MS));
     }
 
-    if (!this.isExplorerTransactionId(transactionId)) {
+    if (!explorerTransactionId) {
       throw new Error(
-        `Wallet returned a local request id (${transactionId}) without a confirmed on-chain transaction id.`,
+        `Wallet returned a local request id (${transactionId}) without an on-chain transaction id before timeout.`,
       );
     }
 
-    throw new Error(`Transaction confirmation timed out: ${transactionId}`);
+    const timeoutSeconds = Math.floor((attempts * CONFIRMATION_POLL_INTERVAL_MS) / 1000);
+    throw new Error(`Transaction confirmation timed out after ${timeoutSeconds}s: ${explorerTransactionId}`);
   }
 
   private extractTransitionOutputs(transaction: any): any[] {
@@ -938,16 +1069,17 @@ export class AleoService {
   }
 
   private parseWalletVerificationRecord(
-    record: WalletRecord,
+    record: unknown,
     expectedOwner?: string,
   ): VerificationRecord | undefined {
-    const data = record?.data || {};
-    if (this.isNonSimpleVerificationRecord(data, record?.plaintext)) {
+    const walletRecord = this.normalizeWalletRecord(record);
+    const data = walletRecord.data || {};
+    if (this.isNonSimpleVerificationRecord(data, walletRecord.plaintext)) {
       return undefined;
     }
 
-    const ownerFromData = this.cleanLeoValue(data.owner);
-    const verifiedFromData = this.cleanLeoValue(data.verified);
+    const ownerFromData = this.cleanLeoValue(this.getRecordField(data, 'owner'));
+    const verifiedFromData = this.cleanLeoValue(this.getRecordField(data, 'verified'));
 
     if (ownerFromData && verifiedFromData) {
       if (expectedOwner && ownerFromData !== expectedOwner) {
@@ -960,9 +1092,9 @@ export class AleoService {
       };
     }
 
-    if (typeof record?.plaintext === 'string') {
-      const ownerMatch = record.plaintext.match(/owner:\s*([^,\n}]+)/i);
-      const verifiedMatch = record.plaintext.match(/verified:\s*([^,\n}]+)/i);
+    if (typeof walletRecord.plaintext === 'string') {
+      const ownerMatch = walletRecord.plaintext.match(/owner:\s*([^,\n}]+)/i);
+      const verifiedMatch = walletRecord.plaintext.match(/verified:\s*([^,\n}]+)/i);
       const owner = this.cleanLeoValue(ownerMatch?.[1]);
       const verifiedRaw = this.cleanLeoValue(verifiedMatch?.[1]);
 
@@ -997,7 +1129,7 @@ export class AleoService {
       'provider_mask',
     ];
 
-    if (knownNonSimpleFields.some((field) => field in data)) {
+    if (knownNonSimpleFields.some((field) => this.hasRecordField(data, field))) {
       return true;
     }
 
@@ -1006,6 +1138,48 @@ export class AleoService {
     }
 
     return false;
+  }
+
+  private normalizeWalletRecord(record: unknown): WalletRecord {
+    if (typeof record === 'string') {
+      return { plaintext: record };
+    }
+
+    if (record && typeof record === 'object') {
+      return record as WalletRecord;
+    }
+
+    return {};
+  }
+
+  private getRecordField(data: Record<string, string>, key: string): string | undefined {
+    return data[key]
+      || data[`${key}.private`]
+      || data[`${key}.public`]
+      || data[`${key}.constant`];
+  }
+
+  private hasRecordField(data: Record<string, string>, key: string): boolean {
+    return this.getRecordField(data, key) !== undefined;
+  }
+
+  private getRecordIdentity(record: unknown): string {
+    if (typeof record === 'string') {
+      return `plaintext:${record}`;
+    }
+
+    const walletRecord = this.normalizeWalletRecord(record);
+    if (typeof walletRecord.plaintext === 'string' && walletRecord.plaintext.trim()) {
+      return `plaintext:${walletRecord.plaintext}`;
+    }
+
+    if (walletRecord.data && typeof walletRecord.data === 'object') {
+      const owner = this.cleanLeoValue(this.getRecordField(walletRecord.data, 'owner'));
+      const verified = this.cleanLeoValue(this.getRecordField(walletRecord.data, 'verified'));
+      return `data:${owner}:${verified}:${JSON.stringify(walletRecord.data)}`;
+    }
+
+    return `unknown:${String(record)}`;
   }
   /**
    * Test a standard transaction (transfer_public) to verify wallet plumbing

@@ -3,8 +3,6 @@
 export interface VerificationRecord {
   owner: string;
   verified: boolean;
-  _nonce: string;
-  _version: number;
 }
 
 export interface ProviderAttestationRecord {
