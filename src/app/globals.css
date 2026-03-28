@@ -107,6 +107,9 @@
 }
 
 @layer utilities {
+  .button-spring {
+    transition-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
   .holographic-bg {
     background: linear-gradient(135deg, hsl(var(--accent) / 0.5) 0%, hsl(var(--primary) / 0.5) 100%);
     mix-blend-mode: screen;
