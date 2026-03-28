@@ -149,15 +149,18 @@ export async function uploadProfileImage(file: File, walletAddress: string): Pro
   formData.append('type', 'image');
   const name = `Bliss Image - ${file.name}`;
   formData.append('name', name);
-  const signature = await signCanonicalPayload(walletHash, {
-    walletHash,
-    nonce,
-    timestamp,
+  const proofPayload = {
     metadata: {
       owner: walletAddress,
       type: 'image',
       name,
     },
+  };
+  const signature = await signCanonicalPayload(walletHash, {
+    walletHash,
+    nonce,
+    timestamp,
+    payload: proofPayload,
   });
   formData.append('proof', JSON.stringify({
     walletHash,
