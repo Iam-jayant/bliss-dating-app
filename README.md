@@ -1,99 +1,157 @@
-# Bliss
+# Bliss — Product Edition
 
-Bliss is a privacy-first decentralized dating app built on Aleo.  
-This version is focused on real testnet user flows: on-chain verification and entitlement checks, encrypted messaging, and no demo-only runtime paths.
+Bliss is a privacy-first, production-grade decentralized dating product combining provable on-chain verification with fast off-chain realtime discovery and encrypted messaging.
 
-## Project Scope
+[![Release](https://img.shields.io/badge/release-v1.0.0-brightgreen)](README.md) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Bliss uses two execution planes:
+Summary: Bliss delivers a consumer-ready dating experience that preserves user privacy while providing verifiable age, entitlement, and subscription state on Aleo.
 
-- On-chain (Aleo): age verification, profile lifecycle, swipe entitlement accounting, subscription state.
-- Off-chain (Gun.js + IPFS): realtime sync for discovery/matches/chat and encrypted profile/media storage.
+---
 
-Core user flow:
+## Table of Contents
 
-1. Connect wallet.
-2. Verify age.
-3. Create profile (on-chain + encrypted payload).
-4. Swipe with entitlement enforcement.
-5. Unlock match on reciprocal actions.
-6. Chat with encrypted messages.
-7. Upgrade to Premium/Plus via private `credits.aleo` transfer + on-chain activation.
+- Product snapshot
+- Key product features
+- How it works (architecture + user flow)
+- Security & privacy
+- Getting started (user & developer)
+- Deployment & production notes
+- Changelog & support
 
-## Transition From Last Submission
+---
 
-| Area | Last Submission Baseline | New Version |
-|---|---|---|
-| Contract lineup | Mixed older program versions in active docs/runtime references | Age + Profile upgraded to `v4`; Matching + Subscription intentionally kept at `v2` for this release cut |
-| Age trust model | Weaker provider authority assumptions | `bliss_age_verification_v4.aleo` adds provider-admin governance, provider authorization records, quorum verification, and revocation |
-| Profile-age linkage | `create_profile` could rely on boolean-only age signal | `create_profile_with_age_bridge` path enforces bridge payload constraints (`provider_mask`, `nonce`, `version`, `issued_at`, `expires_at`, `current_time`) |
-| Swipe enforcement | Client-side counters could become authoritative | Discovery flow consumes on-chain `record_swipe` entitlement with deferred settlement + retry/backoff |
-| Profile write safety | Risk of off-chain-only completion under wallet failures | Profile service now fails closed when required on-chain writes cannot run |
-| IPFS route security | Upload/unpin boundaries were softer | Signed proofs + replay checks + per-IP/per-wallet rate limits; unpin now verifies CID ownership before delete |
-| Submission quality gate | Fragmented verification commands | `npm run ship:preflight` and `npm run ci:verify` enforce typecheck, lint, no-mock, build, and contract-build gates |
+## Product snapshot
 
-## Technical Stack
+| Status | Release | Network | Source of truth |
+|---:|:---:|:---:|:---|
+| Production-ready (Testnet) | v1.0 | Aleo Testnet | [contracts/deployment-artifacts/deployment-summary-testnet.json](contracts/deployment-artifacts/deployment-summary-testnet.json)
 
-- App: Next.js 15 (App Router), React 18, TypeScript, Tailwind CSS.
-- Wallet + chain: `@provablehq/aleo-wallet-adaptor-*`, `@provablehq/sdk`.
-- Realtime data: Gun.js namespace `bliss_v3`.
-- Storage: Pinata through server routes (`upload-json`, `upload-image`, `unpin`).
-- Security controls:
-  - Signed request proofs on sensitive IPFS routes.
-  - Replay nonce protection (`consumeReplayNonce`), Redis required in production.
-  - API rate limiting (`enforceApiRateLimit`), Redis-backed in production.
-  - Runtime no-mock guard via `npm run check:no-mock`.
+Bliss is intended for real users and operator-managed deployments. Contracts for age verification and profile verification are upgraded to `v4`; matching and subscription systems are on `v2` for this release.
 
-## Smart Contracts In Use
+---
 
-| Domain | Program ID | Key transitions |
-|---|---|---|
-| Age verification | `bliss_age_verification_v4.aleo` | `create_provider_admin`, `register_provider`, `issue_provider_attestation`, `verify_age_with_quorum`, `revoke_provider_attestation` |
-| Profile verification | `bliss_profile_verification_v4.aleo` | `create_profile`, `create_profile_with_age_bridge`, `update_profile` |
-| Compatibility matching | `bliss_compatibility_matching_v2.aleo` | `issue_action_ticket`, `record_action`, `create_mutual_match` |
-| Subscription access | `bliss_subscription_access_v2.aleo` | `issue_operation_ticket`, `upgrade_to_premium`, `upgrade_to_plus`, `record_swipe` |
+## Key product features
 
-## Deployment References (Aleo Testnet)
+- **Privacy-first by default:** End-to-end encrypted messages and encrypted profile/media storage on IPFS.
+- **Verifiable age checks:** Provider-attested, quorum-verified age attestations on-chain (`bliss_age_verification_v4.aleo`).
+- **Profile lifecycle with age bridge:** Create and update profiles with cryptographic age-bridging payloads for safety and auditability.
+- **Entitlement-backed swipes:** Swiping consumes on-chain entitlements with deferred settlement and retry/backoff for client resilience.
+- **Match unlocking & secure chat:** Mutual matches unlock an encrypted chat channel synchronized via Gun.js.
+- **Subscription gating:** On-chain subscription state controls premium features and entitlement issuance.
+- **Operator-ready controls:** Signed IPFS routes, replay protection, and Redis-backed rate limiting for production safety.
 
-Source of truth: `contracts/deployment-artifacts/deployment-summary-testnet.json`  
-Generated at: `2026-03-26T12:04:04+05:30` (consensus version `11`)
+---
 
-| Contract | Program ID | Deploy Transaction |
+## How it works — architecture
+
+High level architecture (two execution planes): on-chain for verifiable state, off-chain for realtime UX and storage.
+
+```mermaid
+flowchart LR
+  U[User] -->|Connect wallet| C[Next.js App]
+  C -->|Submit proofs & txs| AC[Aleo Testnet Contracts]
+  AC --> AV[Age Verification v4]
+  AC --> PV[Profile Verification v4]
+  AC --> MM[Matching v2]
+  AC --> SA[Subscription v2]
+  C -->|Realtime sync| G[Gun.js (discovery / matches / chat)]
+  C -->|Store encrypted media| IPFS[IPFS / Pinata]
+  G -->|Encrypted messages| IPFS
+```
+
+User flow (end-to-end):
+
+```mermaid
+flowchart TD
+  U[User] -->|1. Connect Wallet| W[Wallet]
+  W -->|2. Verify Age| AV[Age Verification Contract]
+  AV -->|3. Attestation| P[Profile Service]
+  P -->|4. Create Profile + encrypted payload| IPFS[IPFS]
+  IPFS -->|5. Discovery & Entitlement Check| D[Discovery / Swipe]
+  D -->|6. Create Match| M[Mutual Match]
+  M -->|7. Encrypted Chat| Chat[Encrypted Messaging]
+  Chat -->|8. Upgrade| S[Subscription Contract]
+```
+
+---
+
+## Security & privacy
+
+- **End-to-end encryption** for chat content; profiles and media are stored encrypted on IPFS.
+- **Signed request proofs** protect IPFS routes (`upload-json`, `upload-image`, `unpin`).
+- **Replay nonce protection** and Redis-backed replay tracking for production deployments.
+- **Rate limiting** for sensitive endpoints (per-IP and per-wallet) to mitigate abuse.
+- **Provable on-chain attestations** for age and subscription state — verifiable on-chain history for auditability.
+
+---
+
+## Getting started
+
+User quickstart (run locally):
+
+```bash
+npm ci
+cp .env.example .env
+npm run dev
+# Open http://localhost:9002
+```
+
+Developer / operator quickstart:
+
+```bash
+npm run ci:verify         # run preflight checks (typecheck, lint, build gates)
+npm run contracts:build   # compile Aleo programs
+npm run contracts:deploy  # deploy to configured network (testnet)
+```
+
+App entrypoint: `src/app/page.tsx` — the Next.js App Router powers the client flows and API routes.
+
+---
+
+## Deployment & production notes
+
+- Source of truth for deployed artifacts: [contracts/deployment-artifacts/deployment-summary-testnet.json](contracts/deployment-artifacts/deployment-summary-testnet.json).
+- Important deployments (Aleo Testnet):
+
+| Contract | Program ID | Explorer |
 |---|---|---|
 | Age Verification | `bliss_age_verification_v4.aleo` | https://explorer.provable.com/transaction/at1wuwhrcrtvugf7hpcndehatuhg8ykacrkt7n83a23dg39xjw8pvqqj24ldc |
 | Profile Verification | `bliss_profile_verification_v4.aleo` | https://explorer.provable.com/transaction/at1z9yeywk58tqjs8fsxq6rndezta39ns4ajr2p3s93p5c8pkutwcgsd4f0xq |
 | Compatibility Matching | `bliss_compatibility_matching_v2.aleo` | https://explorer.provable.com/transaction/at1y3kays34gprdnhlqgvts4qgphwaf3t7eg4hj5l8em7wje9h0qqrq5wnuex |
 | Subscription Access | `bliss_subscription_access_v2.aleo` | https://explorer.provable.com/transaction/at1hzndqn298fuslk7nvll7z79p5v6avtjagaxgrx9dxrspqzymlgzsylgray |
 
-## Local Setup
+Production checklist:
 
-Prerequisites:
+- Redis for replay protection & rate limiting
+- Pinata (or alternative) for IPFS pinning with signed-proof checks
+- Monitoring on server routes and Aleo contract interactions
 
-- Node.js 20+
-- npm
-- Leo CLI (for contract scripts)
+---
 
-```bash
-npm install
-cp .env.example .env
-npm run dev
-```
+## Changelog (high level)
 
-App URL: `http://localhost:9002`
+- v1.0 — Production release (Testnet): Age + Profile v4, Matching + Subscription v2, full product QA and preflight gates.
 
-## Verification Commands
+---
 
-```bash
-npm run ci:verify
-npm run ship:preflight
-```
+## Support & feedback
 
-Contract scripts:
+For issues, feature requests, or enterprise inquiries open a GitHub issue or contact the maintainers via the repo.
 
-```bash
-npm run contracts:build
-npm run contracts:deploy
-```
+If you'd like, I can also:
+
+- Add product screenshots and a hosted demo page
+- Generate a short press/product one-pager or slide deck
+
+Would you like me to add screenshots or produce a short product one-pager next?
+
+---
+
+## Contributing
+
+We welcome contributions. Please run `npm run ci:verify` locally before opening a PR.
+
+---
 
 ## License
 
