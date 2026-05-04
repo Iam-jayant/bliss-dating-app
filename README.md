@@ -48,14 +48,14 @@ High level architecture (two execution planes): on-chain for verifiable state, o
 
 ```mermaid
 flowchart LR
-  U[User] -->|Connect wallet| C[Next.js App]
-  C -->|Submit proofs & txs| AC[Aleo Testnet Contracts]
-  AC --> AV[Age Verification v4]
-  AC --> PV[Profile Verification v4]
-  AC --> MM[Matching v2]
-  AC --> SA[Subscription v2]
-  C -->|Realtime sync| G[Gun.js (discovery / matches / chat)]
-  C -->|Store encrypted media| IPFS[IPFS / Pinata]
+  U["User"] -->|Connect wallet| C["Next.js App"]
+  C -->|Submit proofs & txs| AC["Aleo Testnet Contracts"]
+  AC --> AV["Age Verification v4"]
+  AC --> PV["Profile Verification v4"]
+  AC --> MM["Matching v2"]
+  AC --> SA["Subscription v2"]
+  C -->|Realtime sync| G["Gun.js (discovery / matches / chat)"]
+  C -->|Store encrypted media| IPFS["IPFS / Pinata"]
   G -->|Encrypted messages| IPFS
 ```
 
@@ -63,14 +63,14 @@ User flow (end-to-end):
 
 ```mermaid
 flowchart TD
-  U[User] -->|1. Connect Wallet| W[Wallet]
-  W -->|2. Verify Age| AV[Age Verification Contract]
-  AV -->|3. Attestation| P[Profile Service]
-  P -->|4. Create Profile + encrypted payload| IPFS[IPFS]
-  IPFS -->|5. Discovery & Entitlement Check| D[Discovery / Swipe]
-  D -->|6. Create Match| M[Mutual Match]
-  M -->|7. Encrypted Chat| Chat[Encrypted Messaging]
-  Chat -->|8. Upgrade| S[Subscription Contract]
+  U["User"] -->|1. Connect Wallet| W["Wallet"]
+  W -->|2. Verify Age| AV["Age Verification Contract"]
+  AV -->|3. Attestation| P["Profile Service"]
+  P -->|4. Create Profile + encrypted payload| IPFS["IPFS"]
+  IPFS -->|5. Discovery & Entitlement Check| D["Discovery / Swipe"]
+  D -->|6. Create Match| M["Mutual Match"]
+  M -->|7. Encrypted Chat| Chat["Encrypted Messaging"]
+  Chat -->|8. Upgrade| S["Subscription Contract"]
 ```
 
 ---
