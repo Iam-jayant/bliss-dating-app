@@ -1,158 +1,154 @@
-# Bliss — Product Edition
+<p align="center">
+  <img src="public/bliss-logo.png" alt="Bliss logo" width="84" />
+</p>
 
-Bliss is a privacy-first, production-grade decentralized dating product combining provable on-chain verification with fast off-chain realtime discovery and encrypted messaging.
+<h1 align="center">Bliss</h1>
 
-[![Release](https://img.shields.io/badge/release-v1.0.0-brightgreen)](README.md) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+<p align="center"><strong>Production-ready • Aesthetic UI • Next.js 15 • Aleo (Leo) • IPFS (Pinata) • Gun.js</strong></p>
 
-Summary: Bliss delivers a consumer-ready dating experience that preserves user privacy while providing verifiable age, entitlement, and subscription state on Aleo.
+Bliss is a privacy-first dating app built for a consumer-grade UX without leaking sensitive user data.
+It uses Aleo smart contracts for verifiable state (age, profile validity, subscription/entitlements).
+Encrypted profile data and media live off-chain on IPFS, pinned via server-side routes.
+Realtime discovery, matches, and messaging are synchronized through Gun.js using encrypted payloads.
+The result is fast UX with verifiable safety controls and minimal public metadata.
 
----
+## Bliss architecture
 
-## Table of Contents
+![Bliss architecture](public/bliss-architecture.svg)
 
-- Product snapshot
-- Key product features
-- How it works (architecture + user flow)
-- Security & privacy
-- Getting started (user & developer)
-- Deployment & production notes
-- Changelog & support
+## Features
 
----
+### Core Capabilities
 
-## Product snapshot
+- Wallet-based onboarding and on-chain verification primitives
+- Age verification and profile lifecycle verification on Aleo
+- Entitlement-backed swipes and subscription gating
+- Encrypted profile storage and media uploads via IPFS (Pinata)
+- Realtime discovery/match state and encrypted messaging sync via Gun.js
 
-| Status | Release | Network | Source of truth |
-|---:|:---:|:---:|:---|
-| Production-ready (Testnet) | v1.0 | Aleo Testnet | [contracts/deployment-artifacts/deployment-summary-testnet.json](contracts/deployment-artifacts/deployment-summary-testnet.json)
+### User Experience
 
-Bliss is intended for real users and operator-managed deployments. Contracts for age verification and profile verification are upgraded to `v4`; matching and subscription systems are on `v2` for this release.
+- Mobile-first Next.js UI with responsive discovery/matches/messages flows
+- Fast realtime updates (discovery + chats) with minimal loading friction
+- Private-by-default data handling (encrypted payloads; server JWT never in browser)
 
----
+## Architecture
 
-## Key product features
+### Layer 1: Frontend
 
-- **Privacy-first by default:** End-to-end encrypted messages and encrypted profile/media storage on IPFS.
-- **Verifiable age checks:** Provider-attested, quorum-verified age attestations on-chain (`bliss_age_verification_v4.aleo`).
-- **Profile lifecycle with age bridge:** Create and update profiles with cryptographic age-bridging payloads for safety and auditability.
-- **Entitlement-backed swipes:** Swiping consumes on-chain entitlements with deferred settlement and retry/backoff for client resilience.
-- **Match unlocking & secure chat:** Mutual matches unlock an encrypted chat channel synchronized via Gun.js.
-- **Subscription gating:** On-chain subscription state controls premium features and entitlement issuance.
-- **Operator-ready controls:** Signed IPFS routes, replay protection, and Redis-backed rate limiting for production safety.
+- Next.js (App Router) + React + TypeScript
+- Tailwind CSS + Radix UI component primitives
+- Aleo wallet adaptor for signing, proof/tx submission, and session state
 
----
+### Layer 2: Contracts
 
-## How it works — architecture
+- Aleo / Leo programs under `contracts/`
+- Programs (configured via env): age verification, profile verification, matching, subscription access
+- On-chain records store verifiable state; encrypted user content remains off-chain
 
-High level architecture (two execution planes): on-chain for verifiable state, off-chain for realtime UX and storage.
+### Layer 3: Backend (off-chain services)
 
-```mermaid
-flowchart LR
-  U["User"] -->|Connect wallet| C["Next.js App"]
-  C -->|Submit proofs & txs| AC["Aleo Testnet Contracts"]
-  AC --> AV["Age Verification v4"]
-  AC --> PV["Profile Verification v4"]
-  AC --> MM["Matching v2"]
-  AC --> SA["Subscription v2"]
-  C -->|Realtime sync| G["Gun.js (discovery / matches / chat)"]
-  C -->|Store encrypted media| IPFS["IPFS / Pinata"]
-  G -->|Encrypted messages| IPFS
-```
+- Next.js Route Handlers under `src/app/api/` for IPFS pinning and safety controls
+- Signed upload proofs + replay protection + rate limiting (Upstash Redis REST if configured)
+- IPFS (Pinata) as encrypted profile/media persistence layer
+- Gun.js for realtime sync of discovery, matches, and chat metadata (encrypted payloads)
 
-User flow (end-to-end):
+## Data Flow: diagram
 
 ```mermaid
-flowchart TD
-  U["User"] -->|1. Connect Wallet| W["Wallet"]
-  W -->|2. Verify Age| AV["Age Verification Contract"]
-  AV -->|3. Attestation| P["Profile Service"]
-  P -->|4. Create Profile + encrypted payload| IPFS["IPFS"]
-  IPFS -->|5. Discovery & Entitlement Check| D["Discovery / Swipe"]
-  D -->|6. Create Match| M["Mutual Match"]
-  M -->|7. Encrypted Chat| Chat["Encrypted Messaging"]
-  Chat -->|8. Upgrade| S["Subscription Contract"]
+sequenceDiagram
+  autonumber
+  participant U as User
+  participant FE as Next.js App
+  participant W as Aleo Wallet
+  participant AC as Aleo Contracts
+  participant API as Next.js API (/api/ipfs/*)
+  participant IPFS as IPFS/Pinata
+  participant G as Gun.js
+
+  U->>FE: Open app
+  FE->>W: Connect + sign
+  FE->>AC: Submit private proof/tx (age/profile/subscription)
+  FE->>API: Upload encrypted JSON/media (signed proof)
+  API->>IPFS: Pin content (server JWT)
+  FE->>G: Publish updates (encrypted payloads)
+  G-->>FE: Receive updates (encrypted payloads)
+  FE->>AC: Consume entitlements (swipes/subscription gating)
 ```
 
----
+## Technology Stack
 
-## Security & privacy
+- Blockchain: Aleo, Leo, Provable SDK + wallet adaptor
+- Frontend: Next.js 15, React 18, TypeScript, Tailwind CSS, Radix UI
+- Backend: Next.js Route Handlers, Pinata API (IPFS), Gun.js realtime, Upstash Redis REST (optional), Genkit (optional)
+- Dev tools: ESLint, TypeScript (`tsc`), Turbopack, PowerShell scripts for contract build/deploy
 
-- **End-to-end encryption** for chat content; profiles and media are stored encrypted on IPFS.
-- **Signed request proofs** protect IPFS routes (`upload-json`, `upload-image`, `unpin`).
-- **Replay nonce protection** and Redis-backed replay tracking for production deployments.
-- **Rate limiting** for sensitive endpoints (per-IP and per-wallet) to mitigate abuse.
-- **Provable on-chain attestations** for age and subscription state — verifiable on-chain history for auditability.
+## Getting Started
 
----
+### Prerequisites
 
-## Getting started
+- Node.js 20+ and npm
+- Leo CLI installed and available on PATH (for `npm run contracts:*`)
+- Pinata account + JWT (for IPFS pinning)
 
-User quickstart (run locally):
+### Env setup
+
+1. Install dependencies:
 
 ```bash
 npm ci
-cp .env.example .env
-npm run dev
-# Open http://localhost:9002
 ```
 
-Developer / operator quickstart:
+2. Create your env file:
 
 ```bash
-npm run ci:verify         # run preflight checks (typecheck, lint, build gates)
-npm run contracts:build   # compile Aleo programs
-npm run contracts:deploy  # deploy to configured network (testnet)
+cp .env.example .env
 ```
 
-App entrypoint: `src/app/page.tsx` — the Next.js App Router powers the client flows and API routes.
+3. Fill required vars in `.env`:
 
----
+- `PINATA_JWT`
+- `NEXT_PUBLIC_PINATA_GATEWAY`
+- (optional) `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`
 
-## Deployment & production notes
+4. Run the app:
 
-- Source of truth for deployed artifacts: [contracts/deployment-artifacts/deployment-summary-testnet.json](contracts/deployment-artifacts/deployment-summary-testnet.json).
-- Important deployments (Aleo Testnet):
+```bash
+npm run dev
+# http://localhost:9002
+```
 
-| Contract | Program ID | Explorer |
-|---|---|---|
-| Age Verification | `bliss_age_verification_v4.aleo` | https://explorer.provable.com/transaction/at1wuwhrcrtvugf7hpcndehatuhg8ykacrkt7n83a23dg39xjw8pvqqj24ldc |
-| Profile Verification | `bliss_profile_verification_v4.aleo` | https://explorer.provable.com/transaction/at1z9yeywk58tqjs8fsxq6rndezta39ns4ajr2p3s93p5c8pkutwcgsd4f0xq |
-| Compatibility Matching | `bliss_compatibility_matching_v2.aleo` | https://explorer.provable.com/transaction/at1y3kays34gprdnhlqgvts4qgphwaf3t7eg4hj5l8em7wje9h0qqrq5wnuex |
-| Subscription Access | `bliss_subscription_access_v2.aleo` | https://explorer.provable.com/transaction/at1hzndqn298fuslk7nvll7z79p5v6avtjagaxgrx9dxrspqzymlgzsylgray |
+### Contracts (optional)
 
-Production checklist:
+```bash
+npm run contracts:build
+npm run contracts:deploy
+```
 
-- Redis for replay protection & rate limiting
-- Pinata (or alternative) for IPFS pinning with signed-proof checks
-- Monitoring on server routes and Aleo contract interactions
+## Project Structure
 
----
+```text
+contracts/           Aleo (Leo) programs
+docs/                internal notes and audits
+public/              static assets (logo, diagrams)
+scripts/aleo/        PowerShell helpers for build/deploy
+src/app/             Next.js routes (pages + API handlers)
+src/components/      UI + feature components
+src/lib/             Aleo services, storage, security, utils
+```
 
-## Changelog (high level)
+## Security
 
-- v1.0 — Production release (Testnet): Age + Profile v4, Matching + Subscription v2, full product QA and preflight gates.
+### On-Chain Privacy
 
----
+- Aleo private records/proofs keep sensitive user attributes off public state.
+- On-chain state is used for verification and entitlements, not plaintext profiles or messages.
 
-## Support & feedback
+### Attack Mitigations
 
-For issues, feature requests, or enterprise inquiries open a GitHub issue or contact the maintainers via the repo.
+- Server-side Pinata JWT usage (JWT never sent to the browser)
+- Signed upload proofs + replay nonce enforcement on IPFS routes
+- Rate limiting per IP and per wallet hash (Redis-backed if configured, with safe fallbacks)
+- Ownership checks for destructive actions (e.g., unpin only by CID owner)
 
-If you'd like, I can also:
-
-- Add product screenshots and a hosted demo page
-- Generate a short press/product one-pager or slide deck
-
-Would you like me to add screenshots or produce a short product one-pager next?
-
----
-
-## Contributing
-
-We welcome contributions. Please run `npm run ci:verify` locally before opening a PR.
-
----
-
-## License
-
-MIT
+##### Contact For questions or support, please open an issue on GitHub.

@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="860" viewBox="0 0 1400 860" role="img" aria-label="Bliss architecture diagram">
+  <defs>
+    <style>
+      .bg { fill: #0b0f14; }
+      .box { fill: rgba(0,0,0,0); stroke: rgba(255,255,255,0.92); stroke-width: 3.2; stroke-linecap: round; stroke-linejoin: round; }
+      .thin { stroke-width: 2.2; }
+      .title { fill: rgba(255,255,255,0.96); font-size: 34px; font-weight: 700; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+      .label { fill: rgba(255,255,255,0.92); font-size: 18px; font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+      .text { fill: rgba(255,255,255,0.86); font-size: 16px; font-weight: 500; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+      .muted { fill: rgba(255,255,255,0.72); font-size: 14px; font-weight: 500; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+      .arrow { stroke: rgba(255,255,255,0.92); stroke-width: 2.6; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+      .dash { stroke-dasharray: 7 7; }
+    </style>
+
+    <!-- Slight hand-drawn effect -->
+    <filter id="rough" x="-10%" y="-10%" width="120%" height="120%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.012" numOctaves="2" seed="8" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="2.1" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+
+    <marker id="arrowHead" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="10" markerHeight="10" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="rgba(255,255,255,0.92)"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1400" height="860"/>
+
+  <g filter="url(#rough)">
+    <text class="title" x="60" y="70">Bliss — Architecture</text>
+    <text class="muted" x="60" y="102">Privacy-first dating app: on-chain verification + off-chain realtime UX</text>
+
+    <!-- User -->
+    <rect class="box" x="70" y="150" width="240" height="110" rx="16"/>
+    <text class="label" x="95" y="190">User</text>
+    <text class="text" x="95" y="220">Aleo wallet</text>
+    <text class="text" x="95" y="245">Profile + chat</text>
+
+    <!-- Layer 1: Frontend -->
+    <rect class="box" x="360" y="120" width="980" height="190" rx="18"/>
+    <text class="label" x="390" y="160">Layer 1: Frontend</text>
+    <text class="text" x="390" y="190">Next.js (App Router) + React + TypeScript</text>
+    <text class="text" x="390" y="215">Tailwind + Radix UI components</text>
+    <text class="text" x="390" y="240">Aleo wallet adaptor + client-side proof/tx orchestration</text>
+    <text class="text" x="390" y="265">Pages: onboarding, discovery, matches, messages, subscription</text>
+
+    <!-- Layer 2: Contracts -->
+    <rect class="box" x="360" y="350" width="980" height="200" rx="18"/>
+    <text class="label" x="390" y="390">Layer 2: On-chain contracts (Aleo / Leo)</text>
+
+    <rect class="box thin" x="400" y="415" width="210" height="95" rx="14"/>
+    <text class="text" x="420" y="450">Age verification</text>
+    <text class="muted" x="420" y="475">private record proofs</text>
+
+    <rect class="box thin" x="640" y="415" width="230" height="95" rx="14"/>
+    <text class="text" x="660" y="450">Profile verification</text>
+    <text class="muted" x="660" y="475">profile lifecycle</text>
+
+    <rect class="box thin" x="900" y="415" width="210" height="95" rx="14"/>
+    <text class="text" x="920" y="450">Matching</text>
+    <text class="muted" x="920" y="475">entitled swipes</text>
+
+    <rect class="box thin" x="1130" y="415" width="190" height="95" rx="14"/>
+    <text class="text" x="1150" y="450">Subscription</text>
+    <text class="muted" x="1150" y="475">premium gating</text>
+
+    <!-- Layer 3: Off-chain services -->
+    <rect class="box" x="360" y="590" width="980" height="220" rx="18"/>
+    <text class="label" x="390" y="630">Layer 3: Off-chain services</text>
+
+    <rect class="box thin" x="400" y="655" width="310" height="120" rx="14"/>
+    <text class="text" x="420" y="690">Next.js API routes</text>
+    <text class="muted" x="420" y="715">signed proofs + replay protection</text>
+    <text class="muted" x="420" y="740">rate limit (Upstash Redis optional)</text>
+
+    <rect class="box thin" x="740" y="655" width="280" height="120" rx="14"/>
+    <text class="text" x="760" y="690">IPFS (Pinata)</text>
+    <text class="muted" x="760" y="715">encrypted profile/media</text>
+    <text class="muted" x="760" y="740">gateway delivery</text>
+
+    <rect class="box thin" x="1040" y="655" width="280" height="120" rx="14"/>
+    <text class="text" x="1060" y="690">Gun.js realtime sync</text>
+    <text class="muted" x="1060" y="715">discovery/matches/chat state</text>
+    <text class="muted" x="1060" y="740">E2E encrypted payloads</text>
+
+    <!-- Optional AI -->
+    <rect class="box thin dash" x="1040" y="785" width="280" height="55" rx="14"/>
+    <text class="muted" x="1060" y="818">Genkit (optional AI helpers)</text>
+
+    <!-- Arrows -->
+    <path class="arrow" marker-end="url(#arrowHead)" d="M 310 205 C 330 205 340 205 360 205"/>
+    <text class="muted" x="320" y="185">connect</text>
+
+    <path class="arrow" marker-end="url(#arrowHead)" d="M 700 310 C 700 330 700 338 700 350"/>
+    <text class="muted" x="720" y="336">tx + proofs</text>
+
+    <path class="arrow" marker-end="url(#arrowHead)" d="M 560 310 C 560 560 560 600 560 655"/>
+    <text class="muted" x="580" y="585">signed requests</text>
+
+    <path class="arrow" marker-end="url(#arrowHead)" d="M 710 715 C 725 715 730 715 740 715"/>
+    <text class="muted" x="720" y="695">pin</text>
+
+    <path class="arrow" marker-end="url(#arrowHead)" d="M 700 310 C 1080 315 1120 360 1125 415"/>
+    <text class="muted" x="1010" y="350">entitlements</text>
+
+    <path class="arrow" marker-end="url(#arrowHead)" d="M 1080 310 C 1160 470 1200 560 1180 655"/>
+    <text class="muted" x="1200" y="575">realtime</text>
+
+    <path class="arrow dash" marker-end="url(#arrowHead)" d="M 955 775 C 980 810 1005 815 1040 815"/>
+  </g>
+</svg>
